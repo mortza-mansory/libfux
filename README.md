@@ -4,7 +4,8 @@ Its simplify the process of creating ui without anything unrelated to the ui you
 
 Currently in dev,..( I will update it as soon as i have free time, contact me or pull request is available. )
 
-
+![Screenshot](screenshots/fuxexample1.png)
+![Screenshot](screenshots/fuxexample2.png)
 What's New in FUX UI
 
 1. Easy App-Wide Actions with context
