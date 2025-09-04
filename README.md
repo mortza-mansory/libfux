@@ -27,12 +27,12 @@ successStyle.textStyle = { 16, ui::Colors::white };
 
 // Show a custom "success" message at the top
 context.showSnackBar("Login successful!", successStyle, ui::SnackBarPosition::Top);
+```
 2. Simple Conditional UI with ui::If
 Showing or hiding a widget based on a state is now very simple. You no longer need to write complex ContextProvider and ContextBuilder code. Just use the new ui::If widget.
 
 Example:
 This code will only show the DialogBox when the showDialogState variable is true.
-```
 ```
 // In your main UI structure
 ui::Stack({
@@ -52,6 +52,9 @@ ui::Stack({
 No More Crashes: We fixed a major bug that caused the app to crash when showing a SnackBar for the second time. The state management system is now much safer.
 
 Improved Reliability: Several other compiler and runtime errors have been fixed. The library is now more stable and reliable.
+
+
+Example: The main.cpp is your example only put it on your visual studio, config the SDL lib and enjoy power of simplify.
 
 Creator: Morteza Mansory
 Current Version: 0.28.2 { Currently In Dev }
