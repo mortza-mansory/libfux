@@ -6,7 +6,6 @@ Currently in dev,..( I will update it as soon as i have free time, contact me or
 
 
 What's New in FUX UI
-We have made major updates to the library. The goal was to make it simpler, safer, and more powerful. Your code will now be much cleaner and easier to write.
 
 1. Easy App-Wide Actions with context
 There is a new global object named context. You can use it from anywhere in your code to perform common actions without managing complex states.
@@ -17,7 +16,7 @@ How to Use It:
 You can now show different kinds of messages easily. The context object handles all the style and state logic for you.
 
 C++
-
+```
 // Show a simple, default message at the bottom
 context.showSnackBar("Your profile has been updated.");
 
@@ -33,9 +32,8 @@ Showing or hiding a widget based on a state is now very simple. You no longer ne
 
 Example:
 This code will only show the DialogBox when the showDialogState variable is true.
-
-C++
-
+```
+```
 // In your main UI structure
 ui::Stack({
     // ... your main content ...
@@ -49,7 +47,11 @@ ui::Stack({
 
     // ... other overlays ...
 })
+```
 3. Major Stability Fixes
 No More Crashes: We fixed a major bug that caused the app to crash when showing a SnackBar for the second time. The state management system is now much safer.
 
 Improved Reliability: Several other compiler and runtime errors have been fixed. The library is now more stable and reliable.
+
+Creator: Morteza Mansory
+Current Version: 0.28.2 { Currently In Dev }
