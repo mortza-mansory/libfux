@@ -4,11 +4,11 @@ Yeah you hear right, we bring the GetX statemanagement soon in this lib too,
 Keep updated, you can see lasted updates to this lib syntax just from this main.cpp file.
 Regular updates will be applied , if i have some amount of free times..
 Creator - mortza mansory
+Lib version: 0.4.2
 */    
 #include "libfux.hpp"
 
 ui::State<std::string> textBoxContent("");
-
 
 void onShowDialogPressed() {
     ui::Style buttonStyle;
@@ -20,8 +20,7 @@ void onShowDialogPressed() {
     ui::Style dialogContainerStyle;
     dialogContainerStyle.backgroundColor = ui::Colors::white;
     dialogContainerStyle.padding = { 20, 20, 20, 20 };
-    dialogContainerStyle.border.radius.topLeft = 20.0;
-    dialogContainerStyle.border.radius.bottomRight = 20.0;
+    dialogContainerStyle.border.radius = ui::BorderRadius::all(12.0);
 
     ui::showDialog(
         ui::Container(
@@ -29,7 +28,7 @@ void onShowDialogPressed() {
                 ui::Text("This is a Dialog"),
                 ui::Text("Click OK to close."),
                 ui::TextButton("OK", [] {
-                    if (ui::App::instance()) ui::App::instance()->popOverlay();
+                    ui::popOverlay();
                 }, buttonStyle)
                 }, 10),
             dialogContainerStyle
@@ -38,12 +37,10 @@ void onShowDialogPressed() {
 }
 
 void onShowSnackBarPressed() {
-    ui::AppContext::instance().showSnackBar("This is a simple SnackBar!");
+    ui::showSnackBar("This is a simple SnackBar!");
 }
 
 int main(int argc, char* argv[]) {
-    ui::AppContext::instance();
-
     ui::Style primaryButtonStyle;
     primaryButtonStyle.backgroundColor = ui::Colors::blue;
     primaryButtonStyle.textStyle.color = ui::Colors::white;
@@ -67,12 +64,11 @@ int main(int argc, char* argv[]) {
     ui::App app(
         ui::Scaffold(
             ui::Column({
-                ui::Text("FUX Demo", {24}),
+                ui::Text("FUX Library Demo", {24}),
                 ui::TextBox(textBoxContent, "Type something here...", textBoxStyle),
 
-                // Using the super-simple Obx widget for reactivity!
                 ui::Obx([]() -> ui::Widget {
-                    std::string text = textBoxContent.get(); 
+                    std::string text = textBoxContent.get();
                     if (text.empty()) {
                         return ui::Widget(); // Return an empty widget
                     }
