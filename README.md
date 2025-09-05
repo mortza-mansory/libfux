@@ -12,9 +12,6 @@ Currently in dev,..( I will update it as soon as i have free time, contact me or
 
 The new version of the code is **much simpler and cleaner**. Here's a quick look at the key improvements:
 
--  **No ContextProvider Needed**  
-  Direct access to app state with `AppContext::instance()`. No nested contexts.
-
 -  **Simplified Dialogs**  
   Just use `showDialog(...)` — no manual state or `If(...)` checks.
 
