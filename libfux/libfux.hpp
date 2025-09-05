@@ -1,5 +1,5 @@
 // FUX UI Library - Creator Morteza Mansory
-// Version 0.4.2
+// Version 0.4.4
 // Still in development version keep your ears up, for the new version.
 //=----------------------------------------------=
 // Whats New in this Version:
@@ -21,7 +21,7 @@
 
 //  Global Helper Functions for Cleaner API
 // In this new thing , i added some inline void function , to not using App::instance() anymore, so it would help you write cleaner and faster code.
-// And re coding all project means from 900 lines its decrease to ~620 lines! don't know should i celebrate or ...anyway.
+// And re coding all project means from 900 lines its decrease to ~700 lines! don't know should i celebrate or ...anyway.
 //=----------------------------------------------=
 #pragma once
 
@@ -59,6 +59,7 @@ namespace ui {
     class DialogBox;
     class SnackBar;
 
+
     struct Color { uint8_t r, g, b, a = 255; };
     struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
     struct EdgeInsets { int top = 0, right = 0, bottom = 0, left = 0; };
@@ -71,6 +72,11 @@ namespace ui {
     };
 
     struct Border { Color color = { 0,0,0,0 }; int width = 0; BorderRadius radius = {}; };
+
+    struct Size {
+        int width = -1;
+        int height = -1;
+    };
 
     struct Style {
         Color backgroundColor = { 0, 0, 0, 0 };
@@ -207,6 +213,20 @@ namespace ui {
         SDL_Renderer* m_renderer = nullptr;
         std::map<std::string, TTF_Font*> m_fontCache;
         std::string m_defaultFontFile;
+
+        void fillCircle(int x, int y, int radius, Color color) {
+            SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
+            for (int w = 0; w < radius * 2; w++) {
+                for (int h = 0; h < radius * 2; h++) {
+                    int dx = radius - w; // horizontal offset
+                    int dy = radius - h; // vertical offset
+                    if ((dx * dx + dy * dy) <= (radius * radius)) {
+                        SDL_RenderDrawPoint(m_renderer, x + dx, y + dy);
+                    }
+                }
+            }
+        }
+
         TTF_Font* getFont(const std::string& fontFile, int size) {
             std::string actualFontFile = fontFile.empty() ? m_defaultFontFile : fontFile;
             if (actualFontFile.empty()) return nullptr;
@@ -239,10 +259,44 @@ namespace ui {
             SDL_RenderClear(m_renderer);
         }
         void present() override { SDL_RenderPresent(m_renderer); }
+
         void drawRect(const SDL_Rect& rect, Color color, const BorderRadius& radius) override {
             SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
-            SDL_RenderFillRect(m_renderer, &rect);
+
+            if (radius.topLeft <= 0 && radius.topRight <= 0 && radius.bottomLeft <= 0 && radius.bottomRight <= 0) {
+                SDL_RenderFillRect(m_renderer, &rect);
+                return;
+            }
+
+            int r = static_cast<int>(std::max({ radius.topLeft, radius.topRight, radius.bottomLeft, radius.bottomRight }));
+
+            if (r > rect.w / 2) r = rect.w / 2;
+            if (r > rect.h / 2) r = rect.h / 2;
+
+            if (r < 1) { 
+                SDL_RenderFillRect(m_renderer, &rect);
+                return;
+            }
+
+            int x = rect.x;
+            int y = rect.y;
+            int w = rect.w;
+            int h = rect.h;
+
+            fillCircle(x + r, y + r, r, color);
+            fillCircle(x + w - r, y + r, r, color);
+            fillCircle(x + r, y + h - r, r, color);
+            fillCircle(x + w - r, y + h - r, r, color);
+
+            SDL_Rect top_rect = { x + r, y, w - 2 * r, r };
+            SDL_Rect bottom_rect = { x + r, y + h - r, w - 2 * r, r };
+            SDL_Rect middle_rect = { x, y + r, w, h - 2 * r };
+
+            SDL_RenderFillRect(m_renderer, &top_rect);
+            SDL_RenderFillRect(m_renderer, &bottom_rect);
+            SDL_RenderFillRect(m_renderer, &middle_rect);
         }
+
         void drawText(const std::string& text, const TextStyle& style, int x, int y) override {
             if (text.empty()) return;
             TTF_Font* font = getFont(style.fontFile, style.fontSize); if (!font) return;
@@ -362,6 +416,43 @@ namespace ui {
 
     // === All Widgets ===
 
+    class SizedBoxImpl : public WidgetBody {
+    public:
+        std::shared_ptr<WidgetBody> child;
+        Size size;
+
+        SizedBoxImpl(Widget c, Size s) : child(c.getImpl()), size(s) {
+            if (child) child->parent = this;
+        }
+
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            // Use the requested size if provided, otherwise use the constraints.
+            m_allocatedSize.x = c.x;
+            m_allocatedSize.y = c.y;
+            m_allocatedSize.w = (size.width != -1) ? size.width : c.w;
+            m_allocatedSize.h = (size.height != -1) ? size.height : c.h;
+
+            if (child) {
+                child->performLayout(r, m_allocatedSize);
+            }
+        }
+
+        void render(App* a, IRenderer* r) override {
+            if (child) child->render(a, r);
+        }
+
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
+            return child ? child->hitTest(p) : this;
+        }
+    };
+
+    class SizedBox : public Widget {
+    public:
+        SizedBox(Widget child, Size s) : Widget(std::make_shared<SizedBoxImpl>(child, s)) {}
+    };
+
+
     class TextImpl : public WidgetBody {
     public:
         std::string text; TextStyle style;
@@ -393,7 +484,9 @@ namespace ui {
         std::function<Widget()> m_builder;
         std::shared_ptr<WidgetBody> m_child;
     public:
-        ObxImpl(std::function<Widget()> builder) : m_builder(std::move(builder)) {}
+        template<typename Func>
+        ObxImpl(Func&& builder) : m_builder(std::forward<Func>(builder)) {}
+
         void initialize() { buildChild(); }
         void buildChild() {
             auto self_as_derived = std::static_pointer_cast<ObxImpl>(shared_from_this());
@@ -412,13 +505,13 @@ namespace ui {
     };
     class Obx : public Widget {
     public:
-        Obx(std::function<Widget()> builder) {
-            auto impl = std::make_shared<ObxImpl>(std::move(builder));
+        template<typename Func>
+        Obx(Func&& builder) {
+            auto impl = std::make_shared<ObxImpl>(std::forward<Func>(builder));
             impl->initialize();
             p_impl = impl;
         }
     };
-    // Deduction guide was removed for compatibility. User must specify lambda return type.
 
     class ColumnImpl : public WidgetBody {
     public:
@@ -429,11 +522,16 @@ namespace ui {
             int y = c.y;
             for (const auto& ch : children) {
                 if (!ch) continue;
-                int h = 20;
-                if (auto t = std::dynamic_pointer_cast<TextImpl>(ch)) {
-                    h = r->getTextSize(t->text, t->style).y;
+                int child_h = 20;
+                if (auto sizedBox = std::dynamic_pointer_cast<SizedBoxImpl>(ch)) {
+                    if (sizedBox->size.height != -1) {
+                        child_h = sizedBox->size.height;
+                    }
                 }
-                ch->performLayout(r, { c.x, y, c.w, h });
+                else if (auto text_impl = std::dynamic_pointer_cast<TextImpl>(ch)) {
+                    child_h = r->getTextSize(text_impl->text, text_impl->style).y;
+                }
+                ch->performLayout(r, { c.x, y, c.w, child_h });
                 y += ch->m_allocatedSize.h + spacing;
             }
         }
@@ -459,7 +557,43 @@ namespace ui {
     public:
         std::vector<std::shared_ptr<WidgetBody>> children; int spacing;
         RowImpl(std::initializer_list<Widget> c, int s) : spacing(s) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; int x = c.x; int w = children.empty() ? 0 : (c.w - (static_cast<int>(children.size()) - 1) * spacing) / static_cast<int>(children.size()); for (const auto& ch : children) { if (!ch) continue; ch->performLayout(r, { x, c.y, w, c.h }); x += w + spacing; } }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            m_allocatedSize = c;
+            int x = c.x;
+
+            int fixed_width_used = 0;
+            int flex_children_count = 0;
+            for (const auto& ch : children) {
+                if (auto sb = std::dynamic_pointer_cast<SizedBoxImpl>(ch)) {
+                    if (sb->size.width != -1) {
+                        fixed_width_used += sb->size.width;
+                    }
+                    else {
+                        flex_children_count++;
+                    }
+                }
+                else {
+                    flex_children_count++;
+                }
+            }
+            fixed_width_used += std::max(0, static_cast<int>(children.size()) - 1) * spacing;
+            int flex_width = (flex_children_count > 0) ? (c.w - fixed_width_used) / flex_children_count : 0;
+
+            for (const auto& ch : children) {
+                if (!ch) continue;
+
+                int current_child_width = flex_width; 
+                if (auto sb = std::dynamic_pointer_cast<SizedBoxImpl>(ch)) {
+                    if (sb->size.width != -1) {
+                        current_child_width = sb->size.width;
+                    }
+                }
+
+                ch->performLayout(r, { x, c.y, current_child_width, c.h });
+
+                x += ch->m_allocatedSize.w + spacing;
+            }
+        }
         void render(App* a, IRenderer* r) override { for (const auto& c : children) if (c) c->render(a, r); }
         WidgetBody* hitTest(SDL_Point p) override {
             if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
@@ -482,7 +616,18 @@ namespace ui {
     public:
         std::shared_ptr<WidgetBody> child; std::function<void()> onPressed; Style style; bool isHovered = false;
         ButtonImpl(Widget c, std::function<void()> o, Style s) : onPressed(std::move(o)), style(std::move(s)) { child = c.getImpl(); if (child) child->parent = this; }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { SDL_Point childSize = { 0,0 }; if (auto text_impl = std::dynamic_pointer_cast<TextImpl>(child)) { childSize = r->getTextSize(text_impl->text, text_impl->style); } int cX = c.x + (c.w - childSize.x) / 2; int cY = c.y + (c.h - childSize.y) / 2; child->performLayout(r, { cX, cY, childSize.x, childSize.y }); } }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            m_allocatedSize = c;
+            if (child) {
+                child->performLayout(r, c);
+
+                SDL_Point childSize = { child->m_allocatedSize.w, child->m_allocatedSize.h };
+                int cX = c.x + (c.w - childSize.x) / 2;
+                int cY = c.y + (c.h - childSize.y) / 2;
+
+                child->m_allocatedSize = { cX, cY, childSize.x, childSize.y };
+            }
+        }    
         void render(App* a, IRenderer* r) override { Color bg = style.backgroundColor; if (isHovered) { bg.r = (uint8_t)std::max(0, (int)bg.r - 20); bg.g = (uint8_t)std::max(0, (int)bg.g - 20); bg.b = (uint8_t)std::max(0, (int)bg.b - 20); } r->drawRect(m_allocatedSize, bg, style.border.radius); if (child) child->render(a, r); }
         void handleEvent(App*, SDL_Event* e) override {
             if (e->type == SDL_MOUSEMOTION) {
