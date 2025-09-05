@@ -1,116 +1,94 @@
+/* 
+This is the lasted example of LibFux demo, witch is using widgets like flutter and having state management like GetX!
+Yeah you hear right, we bring the GetX statemanagement soon in this lib too, 
+Keep updated, you can see lasted updates to this lib syntax just from this main.cpp file.
+Regular updates will be applied , if i have some amount of free times..
+Creator - mortza mansory
+*/    
 #include "libfux.hpp"
 
-auto& context = ui::AppContext::instance();
-
-ui::State<bool> showDialogState(false);
 ui::State<std::string> textBoxContent("");
 
+
 void onShowDialogPressed() {
-    showDialogState.set(true);
-}
-
-void onDialogOkPressed() {
-    showDialogState.set(false);
-}
-
-ui::Style successStyle;
-ui::Style errorStyle;
-
-void onShowSuccessPressed() {
-    std::string content = textBoxContent.get();
-    std::string message = "Success! You wrote: " + (content.empty() ? "[nothing]" : content);
-    context.showSnackBar(message, successStyle, ui::SnackBarPosition::Top);
-}
-
-void onShowErrorPressed() {
-    context.showSnackBar("This is a custom error message!", errorStyle, ui::SnackBarPosition::Top);
-}
-
-
-int main(int argc, char* argv[]) {
-    successStyle.backgroundColor = ui::Colors::green;
-    successStyle.textStyle = { 16, ui::Colors::white };
-    successStyle.padding = { 12, 18, 12, 18 };
-    successStyle.border.radius = 8.0;
-
-    errorStyle.backgroundColor = ui::Colors::red;
-    errorStyle.textStyle = { 16, ui::Colors::white };
-    errorStyle.padding = { 12, 18, 12, 18 };
-    errorStyle.border.radius = 8.0;
-
-    ui::Style primaryButtonStyle;
-    primaryButtonStyle.backgroundColor = ui::Colors::blue;
-    primaryButtonStyle.textStyle = { 16, ui::Colors::white };
-    primaryButtonStyle.padding = { 10, 15, 10, 15 };
-    primaryButtonStyle.border.radius = 8.0;
+    ui::Style buttonStyle;
+    buttonStyle.backgroundColor = ui::Colors::lightBlue;
+    buttonStyle.textStyle.color = ui::Colors::white;
+    buttonStyle.padding = { 10, 10, 10, 10 };
+    buttonStyle.border.radius = ui::BorderRadius::all(8.0);
 
     ui::Style dialogContainerStyle;
     dialogContainerStyle.backgroundColor = ui::Colors::white;
     dialogContainerStyle.padding = { 20, 20, 20, 20 };
-    dialogContainerStyle.border.radius = 12.0;
+    dialogContainerStyle.border.radius.topLeft = 20.0;
+    dialogContainerStyle.border.radius.bottomRight = 20.0;
+
+    ui::showDialog(
+        ui::Container(
+            ui::Column({
+                ui::Text("This is a Dialog"),
+                ui::Text("Click OK to close."),
+                ui::TextButton("OK", [] {
+                    if (ui::App::instance()) ui::App::instance()->popOverlay();
+                }, buttonStyle)
+                }, 10),
+            dialogContainerStyle
+        )
+    );
+}
+
+void onShowSnackBarPressed() {
+    ui::AppContext::instance().showSnackBar("This is a simple SnackBar!");
+}
+
+int main(int argc, char* argv[]) {
+    ui::AppContext::instance();
+
+    ui::Style primaryButtonStyle;
+    primaryButtonStyle.backgroundColor = ui::Colors::blue;
+    primaryButtonStyle.textStyle.color = ui::Colors::white;
+    primaryButtonStyle.padding = { 10, 20, 10, 20 };
+    primaryButtonStyle.border.radius = ui::BorderRadius::all(8.0);
+
+    ui::Style successButtonStyle;
+    successButtonStyle.backgroundColor = ui::Colors::green;
+    successButtonStyle.textStyle.color = ui::Colors::white;
+    successButtonStyle.padding = { 10, 20, 10, 20 };
+    successButtonStyle.border.radius = ui::BorderRadius::all(8.0);
+
+    ui::Style mainScaffoldStyle;
+    mainScaffoldStyle.padding = { 20, 20, 20, 20 };
 
     ui::Style textBoxStyle;
     textBoxStyle.backgroundColor = { 230, 230, 230 };
-    textBoxStyle.padding = { 8, 12, 8, 12 };
-    textBoxStyle.border.radius = 8.0;
-
-    ui::Style mainContainerStyle;
-    mainContainerStyle.padding = { 20, 20, 20, 20 };
-
-    ui::Style okButtonStyle;
-    okButtonStyle.backgroundColor = ui::Colors::transparent;
-    okButtonStyle.textStyle = { 16, ui::Colors::blue };
+    textBoxStyle.padding = { 10, 10, 10, 10 };
+    textBoxStyle.border.radius = ui::BorderRadius::all(4.0);
 
     ui::App app(
-        ui::ContextProvider<ui::SnackBarConfig>(context.snackBarConfig,
-            ui::ContextProvider<std::string>(textBoxContent,
-                ui::ContextProvider<bool>(showDialogState,
-                    ui::Stack({
+        ui::Scaffold(
+            ui::Column({
+                ui::Text("FUX Demo", {24}),
+                ui::TextBox(textBoxContent, "Type something here...", textBoxStyle),
 
-                        ui::Container(
-                            ui::Column({
-                                ui::Text("FUX Library Demo", {24, ui::Colors::black}),
-                                ui::TextBox(textBoxContent, "Type something here...", textBoxStyle),
-                                ui::Row({
-                                    ui::TextButton("Show Dialog", onShowDialogPressed, primaryButtonStyle),
-                                    ui::TextButton("Show Success", onShowSuccessPressed, primaryButtonStyle),
-                                    ui::TextButton("Show Error", onShowErrorPressed, primaryButtonStyle)
-                                }, 10)
-                            }, 15),
-                            mainContainerStyle
-                        ),
-                            ui::If(showDialogState, [=]() {
-                                return ui::DialogBox(
-                                    ui::Container(
-                                        ui::Column({
-                                            ui::Text("This is a Dialog", {20, ui::Colors::black}),
-                                            ui::Text("Click OK to close.", {14, ui::Colors::grey}),
-                                            ui::Container({}, {{10,0,0,0}}),
-                                            ui::TextButton("OK", onDialogOkPressed, okButtonStyle)
-                                        }, 15),
-                                        dialogContainerStyle
-                                    )
-                                );
-                            }),
+                // Using the super-simple Obx widget for reactivity!
+                ui::Obx([]() -> ui::Widget {
+                    std::string text = textBoxContent.get(); 
+                    if (text.empty()) {
+                        return ui::Widget(); // Return an empty widget
+                    }
+                    return ui::Text("You wrote: " + text);
+                }),
 
-                            ui::If(context.isSnackBarVisible, []() {
-                                return ui::ContextBuilder<ui::SnackBarConfig>([](ui::SnackBarConfig config) -> ui::Widget {
-                                    return ui::SnackBar(
-                                        ui::Container(
-                                            ui::Text(config.message, config.style.textStyle),
-                                            config.style
-                                        ),
-                                        config.position
-                                    );
-                                });
-                            })
-                        })
-                )
-            )
+                ui::Row({
+                    ui::TextButton("Show Dialog", onShowDialogPressed, primaryButtonStyle),
+                    ui::TextButton("Show SnackBar", onShowSnackBarPressed, successButtonStyle)
+                }, 10)
+                }, 15),
+            mainScaffoldStyle
         )
     );
 
-    app.run("FUX Demo", { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 400 });
+    app.run("FUX Demo 3.0", true, { 600, 450 });
 
     return 0;
 }
