@@ -1,5 +1,26 @@
 // FUX UI Library - Creator Morteza Mansory
-// Version 0.2.28
+// Version 0.4.0
+// Still in development version keep your ears up, for the new version.
+//=----------------------------------------------=
+// Whats New in this Version:
+
+// Reactivity System Has Changed
+// The new code uses a simpler reactivity system with Obx and g_currentlyBuildingWidget to track widgets.
+
+// Layout Handling is Different
+// In the new version, widget sizes are explicitly calculated using a performLayout function before rendering.
+
+// Overlay Management Added
+// The new code introduces m_overlayStack to show dialogs and snackbars, allowing multiple overlapping windows.
+
+// Smarter Event Handling
+// The new version uses hitTest to detect which widget should receive a click event (usually the top one).
+
+// Improved Snackbar Timer
+// In the new code, snackbar timers are managed centrally in the app’s main loop (App::run).
+
+// And re coding all project means from 900 lines its decrease to ~620 lines! don't know should i celebrate or ...anyway.
+//=----------------------------------------------=
 #pragma once
 
 #ifdef HIDE_CONSOLE
@@ -22,7 +43,8 @@
 #include <typeinfo>
 #include <chrono>
 #include <thread>
-
+#include <utility>
+#include <optional>
 
 namespace ui {
 
@@ -30,11 +52,21 @@ namespace ui {
     class Widget;
     class WidgetBody;
     class IRenderer;
+    class SDLRenderer;
+    class RebuildRequester;
 
     struct Color { uint8_t r, g, b, a = 255; };
-    struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile = "arial.ttf"; };
+    struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
     struct EdgeInsets { int top = 0, right = 0, bottom = 0, left = 0; };
-    struct Border { Color color = { 0,0,0,0 }; int width = 0; double radius = 0.0; };
+
+    struct BorderRadius {
+        double topLeft = 0.0, topRight = 0.0, bottomLeft = 0.0, bottomRight = 0.0;
+        static BorderRadius all(double radius) {
+            return { radius, radius, radius, radius };
+        }
+    };
+
+    struct Border { Color color = { 0,0,0,0 }; int width = 0; BorderRadius radius = {}; };
 
     struct Style {
         Color backgroundColor = { 0, 0, 0, 0 };
@@ -44,12 +76,6 @@ namespace ui {
     };
 
     enum class SnackBarPosition { Bottom, Top };
-
-    struct SnackBarConfig {
-        std::string message = "";
-        Style style = {};
-        SnackBarPosition position = SnackBarPosition::Bottom;
-    };
 
     namespace Colors {
         constexpr Color transparent = { 0, 0, 0, 0 };
@@ -63,203 +89,173 @@ namespace ui {
         constexpr Color darkGrey = { 40, 40, 40 };
     }
 
-    class ContextBuilderBase {
+    class RebuildRequester {
     public:
-        virtual ~ContextBuilderBase() = default;
+        virtual ~RebuildRequester() = default;
         virtual void rebuild() = 0;
-        virtual void addDependency(void* state, size_t type_hash) = 0;
     };
 
-    // =======================================================
-    // Reactivity System
-    // =======================================================
+    inline std::weak_ptr<RebuildRequester> g_currentlyBuildingWidget;
+
     template<typename T>
     class State {
     public:
-        State(T initialValue) : value(initialValue) {}
+        State(T initialValue) : m_value(initialValue) {}
 
         const T& get() const {
-            if (currentlyBuilding) currentlyBuilding->addDependency((void*)this, typeid(T).hash_code());
-            return value;
+            if (auto listener = g_currentlyBuildingWidget.lock()) {
+                m_listeners.push_back(listener);
+            }
+            return m_value;
         }
 
         void set(T newValue) {
-            value = newValue;
-            listeners.erase(std::remove_if(listeners.begin(), listeners.end(),
-                [](const std::weak_ptr<ContextBuilderBase>& weak_listener) {
-                    if (auto shared_listener = weak_listener.lock()) {
-                        shared_listener->rebuild();
-                        return false; // Keep
-                    }
-                    return true; // Remove
-                }), listeners.end());
-        }
+            if (m_value == newValue) return;
+            m_value = newValue;
 
-        void subscribe(std::shared_ptr<ContextBuilderBase> listener) {
-            listeners.push_back(listener);
-        }
+            std::set<std::shared_ptr<RebuildRequester>> unique_listeners;
+            for (const auto& weak_ptr : m_listeners) {
+                if (auto shared_ptr = weak_ptr.lock()) {
+                    unique_listeners.insert(shared_ptr);
+                }
+            }
 
-        static inline ContextBuilderBase* currentlyBuilding = nullptr;
-    private:
-        T value;
-        std::vector<std::weak_ptr<ContextBuilderBase>> listeners;
-    };
+            m_listeners.clear();
 
-    // =======================================================
-    // Global AppContext for simplified actions
-    // =======================================================
-
-    class AppContext {
-    public:
-        static AppContext& instance() {
-            static AppContext inst;
-            return inst;
-        }
-        State<bool> isSnackBarVisible{ false };
-        State<SnackBarConfig> snackBarConfig{ SnackBarConfig{} };
-
-        void showSnackBar(const std::string& message) {
-            Style defaultStyle;
-            defaultStyle.backgroundColor = Colors::darkGrey;
-            defaultStyle.textStyle = { 16, Colors::white };
-            defaultStyle.padding = { 12, 18, 12, 18 };
-            defaultStyle.border.radius = 6.0;
-
-            show({ message, defaultStyle, SnackBarPosition::Bottom });
-        }
-
-void showSnackBar(const std::string& message, const Style& style, SnackBarPosition position = SnackBarPosition::Bottom) {
-            show({ message, style, position });
+            for (const auto& listener : unique_listeners) {
+                listener->rebuild();
+            }
         }
 
     private:
-        void show(const SnackBarConfig& config) {
-            snackBarConfig.set(config);
-            isSnackBarVisible.set(true);
-
-            std::thread([this]() {
-                std::this_thread::sleep_for(std::chrono::seconds(3));
-                this->isSnackBarVisible.set(false);
-                }).detach();
-        }
-
-        AppContext() = default;
-        ~AppContext() = default;
-        AppContext(const AppContext&) = delete;
-        AppContext& operator=(const AppContext&) = delete;
+        T m_value;
+        mutable std::vector<std::weak_ptr<RebuildRequester>> m_listeners;
     };
-    // =======================================================
-    // Handle-Body Architecture
-    // =======================================================
+
     class IRenderer {
     public:
         virtual ~IRenderer() = default;
         virtual bool init(SDL_Window* window) = 0;
         virtual void clear(Color color) = 0;
         virtual void present() = 0;
-        virtual void drawRect(const SDL_Rect& rect, Color color, double radius) = 0;
+        virtual void drawRect(const SDL_Rect& rect, Color color, const BorderRadius& radius) = 0;
         virtual void drawText(const std::string& text, const TextStyle& style, int x, int y) = 0;
         virtual SDL_Point getTextSize(const std::string& text, const TextStyle& style) = 0;
     };
 
     class WidgetBody : public std::enable_shared_from_this<WidgetBody> {
     public:
-        virtual ~WidgetBody() = default;
-        virtual void render(App* app, IRenderer* renderer, SDL_Rect allocatedSize) = 0;
-        virtual void handleEvent(App* app, SDL_Event* event, SDL_Rect allocatedSize) {}
-        virtual SDL_Point getPreferredSize(IRenderer* renderer, SDL_Point constraints) = 0;
-        virtual std::any getContext(size_t type_hash) {
-            return (parent) ? parent->getContext(type_hash) : std::any{};
-        }
-
+        SDL_Rect m_allocatedSize = { 0, 0, 0, 0 };
         WidgetBody* parent = nullptr;
-        int flex = 0;
+        virtual ~WidgetBody() = default;
+        virtual void performLayout(IRenderer* renderer, SDL_Rect constraints) = 0;
+        virtual void render(App* app, IRenderer* renderer) = 0;
+        virtual WidgetBody* hitTest(SDL_Point point) {
+            return SDL_PointInRect(&point, &m_allocatedSize) ? this : nullptr;
+        }
+        virtual void handleEvent(App* app, SDL_Event* event) {}
     };
 
     class Widget {
-    private:
+    protected:
         std::shared_ptr<WidgetBody> p_impl;
     public:
         Widget(std::shared_ptr<WidgetBody> impl = nullptr) : p_impl(impl) {}
         WidgetBody* operator->() const { return p_impl.get(); }
-        WidgetBody* get() const { return p_impl.get(); }
         std::shared_ptr<WidgetBody> getImpl() const { return p_impl; }
         explicit operator bool() const { return p_impl != nullptr; }
     };
 
+    class App {
+    public:
+        App(Widget root) : m_root_handle(root) { s_instance = this; }
+        ~App() {
+            m_renderer.reset();
+            if (m_window) SDL_DestroyWindow(m_window);
+            TTF_Quit();
+            SDL_Quit();
+            s_instance = nullptr;
+        }
+        void run(const std::string& title, bool resizable = false, SDL_Point size = { 800, 600 }) {
+            run(title, { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.x, size.y }, resizable);
+        }
+        void run(const std::string& title = "FUX App",
+            SDL_Rect size = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600 },
+            bool resizable = false,
+            Color backgroundColor = Colors::white,
+            const std::string& defaultFont = "arial.ttf");
+        static App* instance() { return s_instance; }
+        void pushOverlay(Widget widget) {
+            m_overlayStack.push_back(widget.getImpl());
+            markNeedsLayoutUpdate();
+        }
+        void popOverlay() {
+            if (!m_overlayStack.empty()) {
+                m_overlayStack.pop_back();
+                markNeedsLayoutUpdate();
+            }
+        }
+        void addTimer(unsigned int ms, std::function<void()> callback) {
+            m_timers.push_back({ std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), std::move(callback) });
+        }
+        void requestFocus(WidgetBody* widget) { m_focusedWidget = widget; }
+        void releaseFocus(WidgetBody* widget) { if (m_focusedWidget == widget) m_focusedWidget = nullptr; }
+        void markNeedsLayoutUpdate() { m_needs_layout_update = true; }
+    private:
+        struct Timer { std::chrono::steady_clock::time_point expiryTime; std::function<void()> callback; };
+        Widget m_root_handle;
+        std::shared_ptr<WidgetBody> m_root_body;
+        SDL_Window* m_window = nullptr;
+        std::unique_ptr<IRenderer> m_renderer;
+        std::vector<std::shared_ptr<WidgetBody>> m_overlayStack;
+        static App* s_instance;
+        std::vector<Timer> m_timers;
+        WidgetBody* m_focusedWidget = nullptr;
+        bool m_needs_layout_update = true;
+    };
+    inline App* App::s_instance = nullptr;
+
     class SDLRenderer : public IRenderer {
     private:
         SDL_Renderer* m_renderer = nullptr;
-        std::map<std::string, TTF_Font*> fontCache;
-
+        std::map<std::string, TTF_Font*> m_fontCache;
+        std::string m_defaultFontFile;
         TTF_Font* getFont(const std::string& fontFile, int size) {
-            std::string key = fontFile + std::to_string(size);
-            if (fontCache.find(key) == fontCache.end()) {
-                TTF_Font* font = TTF_OpenFont(fontFile.c_str(), size);
+            std::string actualFontFile = fontFile.empty() ? m_defaultFontFile : fontFile;
+            if (actualFontFile.empty()) return nullptr;
+            std::string key = actualFontFile + std::to_string(size);
+            if (m_fontCache.find(key) == m_fontCache.end()) {
+                TTF_Font* font = TTF_OpenFont(actualFontFile.c_str(), size);
                 if (!font) {
-                    std::cerr << "CRITICAL: Failed to load font '" << fontFile << "'. Ensure it is next to the executable. | SDL_ttf Error: " << TTF_GetError() << std::endl;
+                    std::cerr << "WARN: Failed to load font '" << actualFontFile << "'. Trying fallback." << std::endl;
                     font = TTF_OpenFont("C:/Windows/Fonts/Arial.ttf", size);
-                    if (!font) {
-                        std::cerr << "CRITICAL: Could not load fallback font Arial from Windows/Fonts." << std::endl;
-                        return nullptr;
-                    }
+                    if (!font) { std::cerr << "CRITICAL: Could not load ANY font." << std::endl; return nullptr; }
                 }
-                fontCache[key] = font;
+                m_fontCache[key] = font;
             }
-            return fontCache[key];
+            return m_fontCache[key];
         }
-
     public:
+        SDLRenderer(std::string defaultFont) : m_defaultFontFile(std::move(defaultFont)) {}
         ~SDLRenderer() {
-            for (auto const& [key, val] : fontCache) { if (val) TTF_CloseFont(val); }
+            for (auto const& [key, val] : m_fontCache) { if (val) TTF_CloseFont(val); }
             if (m_renderer) SDL_DestroyRenderer(m_renderer);
         }
-
         bool init(SDL_Window* window) override {
             m_renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
             if (!m_renderer) return false;
             SDL_SetRenderDrawBlendMode(m_renderer, SDL_BLENDMODE_BLEND);
             return true;
         }
-
         void clear(Color color) override {
             SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
             SDL_RenderClear(m_renderer);
         }
-
         void present() override { SDL_RenderPresent(m_renderer); }
-
-        void drawRect(const SDL_Rect& rect, Color color, double radius) override {
+        void drawRect(const SDL_Rect& rect, Color color, const BorderRadius& radius) override {
             SDL_SetRenderDrawColor(m_renderer, color.r, color.g, color.b, color.a);
-            if (radius <= 1.0) {
-                SDL_RenderFillRect(m_renderer, &rect);
-            }
-            else {
-                int r = static_cast<int>(radius);
-                int x = rect.x, y = rect.y, w = rect.w, h = rect.h;
-                if (r > w / 2) r = w / 2;
-                if (r > h / 2) r = h / 2;
-
-                SDL_Rect centerRect = { x + r, y, w - 2 * r, h };
-                SDL_RenderFillRect(m_renderer, &centerRect);
-                SDL_Rect leftRect = { x, y + r, r, h - 2 * r };
-                SDL_RenderFillRect(m_renderer, &leftRect);
-                SDL_Rect rightRect = { x + w - r, y + r, r, h - 2 * r };
-                SDL_RenderFillRect(m_renderer, &rightRect);
-
-                for (int i = 0; i < r; i++) {
-                    for (int j = 0; j < r; j++) {
-                        if (i * i + j * j < r * r) {
-                            SDL_RenderDrawPoint(m_renderer, x + r - i, y + r - j);
-                            SDL_RenderDrawPoint(m_renderer, x + w - r - 1 + i, y + r - j);
-                            SDL_RenderDrawPoint(m_renderer, x + r - i, y + h - r - 1 + j);
-                            SDL_RenderDrawPoint(m_renderer, x + w - r - 1 + i, y + h - r - 1 + j);
-                        }
-                    }
-                }
-            }
+            SDL_RenderFillRect(m_renderer, &rect);
         }
-
         void drawText(const std::string& text, const TextStyle& style, int x, int y) override {
             if (text.empty()) return;
             TTF_Font* font = getFont(style.fontFile, style.fontSize); if (!font) return;
@@ -271,290 +267,184 @@ void showSnackBar(const std::string& message, const Style& style, SnackBarPositi
             SDL_DestroyTexture(texture);
             SDL_FreeSurface(surface);
         }
-
         SDL_Point getTextSize(const std::string& text, const TextStyle& style) override {
             if (text.empty()) return { 0, style.fontSize };
             TTF_Font* font = getFont(style.fontFile, style.fontSize);
-            if (!font) return { 0, 0 };
+            if (!font) return { 0, style.fontSize };
             int w, h;
             TTF_SizeText(font, text.c_str(), &w, &h);
             return { w, h };
         }
     };
 
-    // =======================================================
-    // App Class
-    // =======================================================
-    class App {
-    public:
-        App(Widget root) : m_root_handle(root) {}
-        ~App() {
-            m_renderer.reset();
-            if (m_window) SDL_DestroyWindow(m_window);
-            TTF_Quit();
-            SDL_Quit();
-        }
+    inline void App::run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont) {
+        if (SDL_Init(SDL_INIT_VIDEO) < 0) return;
+        if (TTF_Init() == -1) return;
 
-        void run(const std::string& title = "FUI App",
-            SDL_Rect size = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600 },
-            bool resizable = false,
-            Color backgroundColor = Colors::white)
-        {
-            SDL_Init(SDL_INIT_VIDEO);
-            TTF_Init();
-            Uint32 window_flags = SDL_WINDOW_SHOWN | (resizable ? SDL_WINDOW_RESIZABLE : 0);
+        Uint32 window_flags = SDL_WINDOW_SHOWN | (resizable ? SDL_WINDOW_RESIZABLE : 0);
+        m_window = SDL_CreateWindow(title.c_str(), size.x, size.y, size.w, size.h, window_flags);
+        m_renderer = std::make_unique<SDLRenderer>(defaultFont);
+        if (!m_window || !m_renderer->init(m_window)) { return; }
+        m_root_body = m_root_handle.getImpl();
 
-            m_renderer = std::make_unique<SDLRenderer>();
+        bool running = true;
+        while (running) {
+            // === TIMER HANDLING (FIXED) ===
+            auto now = std::chrono::steady_clock::now();
+            std::vector<std::function<void()>> callbacks_to_run;
 
-            m_window = SDL_CreateWindow(title.c_str(), size.x, size.y, size.w, size.h, window_flags);
-            if (!m_window || !m_renderer->init(m_window)) { return; }
-
-            m_root_body = m_root_handle.getImpl();
-            if (m_root_body) m_root_body->parent = nullptr;
-
-            bool running = true;
-            while (running) {
-                SDL_Event event;
-                while (SDL_PollEvent(&event)) {
-                    if (event.type == SDL_QUIT) running = false;
-                    if (m_root_body) {
-                        int w, h;
-                        SDL_GetWindowSize(m_window, &w, &h);
-                        m_root_body->handleEvent(this, &event, { 0, 0, w, h });
+            m_timers.erase(std::remove_if(m_timers.begin(), m_timers.end(),
+                [&](Timer& timer) {
+                    if (now >= timer.expiryTime) {
+                        callbacks_to_run.push_back(std::move(timer.callback));
+                        return true;
                     }
+                    return false;
+                }), m_timers.end());
+
+            for (const auto& callback : callbacks_to_run) {
+                callback();
+            }
+
+            // === EVENT HANDLING ===
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_QUIT) running = false;
+                if (m_needs_layout_update) continue;
+
+                SDL_Point mousePos = { event.motion.x, event.motion.y };
+                WidgetBody* target = nullptr;
+
+                if (!m_overlayStack.empty()) {
+                    target = m_overlayStack.back()->hitTest(mousePos);
+                }
+                else if (m_root_body) {
+                    target = m_root_body->hitTest(mousePos);
                 }
 
-                m_renderer->clear(backgroundColor);
-                if (m_root_body) {
-                    int w, h;
-                    SDL_GetWindowSize(m_window, &w, &h);
-                    m_root_body->render(this, m_renderer.get(), { 0, 0, w, h });
+                if (target) {
+                    target->handleEvent(this, &event);
                 }
-                m_renderer->present();
-                SDL_Delay(16);
+                else if (m_focusedWidget) {
+                    m_focusedWidget->handleEvent(this, &event);
+                }
             }
+
+            // === LAYOUT & RENDERING ===
+            if (m_needs_layout_update) {
+                int w, h; SDL_GetWindowSize(m_window, &w, &h); SDL_Rect windowRect = { 0, 0, w, h };
+                if (m_root_body) m_root_body->performLayout(m_renderer.get(), windowRect);
+                for (const auto& overlay : m_overlayStack) { overlay->performLayout(m_renderer.get(), windowRect); }
+                m_needs_layout_update = false;
+            }
+
+            m_renderer->clear(backgroundColor);
+            if (m_root_body) m_root_body->render(this, m_renderer.get());
+            for (const auto& overlay : m_overlayStack) { overlay->render(this, m_renderer.get()); }
+            m_renderer->present();
+
+            SDL_Delay(16);
         }
+    }
+
+    class DialogBox;
+    inline void showDialog(Widget dialogContent);
+    class SnackBar;
+    class AppContext {
+    public:
+        static AppContext& instance() { static AppContext inst; return inst; }
+        void showSnackBar(const std::string& message);
+        void showSnackBar(const std::string& message, const Style& style, SnackBarPosition position = SnackBarPosition::Bottom);
     private:
-        Widget m_root_handle;
-        std::shared_ptr<WidgetBody> m_root_body;
-        SDL_Window* m_window = nullptr;
-        std::unique_ptr<IRenderer> m_renderer;
+        void show(const std::string& message, const Style& style, SnackBarPosition position);
+        AppContext() = default;
     };
 
-    // =======================================================
-    // Context & State Management Widgets
-    // =======================================================
-    template<typename T>
-    class ContextProviderImpl : public WidgetBody {
-    public:
-        State<T>& state_ref;
-        std::shared_ptr<WidgetBody> child;
-
-        ContextProviderImpl(State<T>& state, Widget childWidget) : state_ref(state) {
-            child = childWidget.getImpl();
-            if (child) child->parent = this;
-        }
-
-        std::any getContext(size_t type_hash) override {
-            return (type_hash == typeid(T).hash_code()) ? std::any(&state_ref) : WidgetBody::getContext(type_hash);
-        }
-
-        void render(App* app, IRenderer* r, SDL_Rect size) override { if (child) child->render(app, r, size); }
-        void handleEvent(App* app, SDL_Event* e, SDL_Rect s) override { if (child) child->handleEvent(app, e, s); }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override { return child ? child->getPreferredSize(r, c) : SDL_Point{ 0,0 }; }
-    };
-
-    template<typename T>
-    class ContextProvider : public Widget {
-    public:
-        ContextProvider(State<T>& state, Widget child)
-            : Widget(std::make_shared<ContextProviderImpl<T>>(state, child)) {
-        }
-    };
-
-    template<typename T>
-    class ContextBuilderImpl : public WidgetBody, public ContextBuilderBase {
-    public:
-        std::function<Widget(T)> builder;
-        std::shared_ptr<WidgetBody> child;
-        State<T>* state_ptr = nullptr;
-        std::set<void*> dependencies;
-
-        ContextBuilderImpl(std::function<Widget(T)> builder) : builder(builder) {}
-
-        void buildChild() {
-            if (!state_ptr) return;
-            State<T>::currentlyBuilding = this;
-            Widget new_widget = builder(state_ptr->get());
-            State<T>::currentlyBuilding = nullptr;
-            child = new_widget.getImpl();
-            if (child) child->parent = this;
-        }
-
-        void rebuild() override { buildChild(); }
-
-        void addDependency(void* state_void, size_t type_hash) override {
-            if (type_hash == typeid(T).hash_code() && dependencies.find(state_void) == dependencies.end()) {
-                if (auto self = std::dynamic_pointer_cast<ContextBuilderBase>(shared_from_this())) {
-                    static_cast<State<T>*>(state_void)->subscribe(self);
-                    dependencies.insert(state_void);
-                }
-            }
-        }
-
-        void ensureInitialized() {
-            if (!state_ptr) {
-                auto context = getContext(typeid(T).hash_code());
-                if (context.has_value()) {
-                    state_ptr = std::any_cast<State<T>*>(context);
-                    buildChild();
-                }
-            }
-        }
-
-        void render(App* app, IRenderer* r, SDL_Rect size) override {
-            ensureInitialized();
-            if (child) child->render(app, r, size);
-        }
-        void handleEvent(App* app, SDL_Event* e, SDL_Rect s) override {
-            ensureInitialized();
-            if (child) child->handleEvent(app, e, s);
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            ensureInitialized();
-            return child ? child->getPreferredSize(r, c) : SDL_Point{ 0, 0 };
-        }
-    };
-
-    template<typename T>
-    class ContextBuilder : public Widget {
-    public:
-        ContextBuilder(std::function<Widget(T)> builder)
-            : Widget(std::make_shared<ContextBuilderImpl<T>>(builder)) {
-        }
-    };
-
-    // =======================================================
-    // Basic Layout Widgets
-    // =======================================================
     class TextImpl : public WidgetBody {
     public:
-        std::string text;
-        TextStyle style;
-        TextImpl(std::string text, TextStyle style) : text(text), style(style) {}
-        void render(App* app, IRenderer* r, SDL_Rect s) override {
-            if (r) r->drawText(text, style, s.x, s.y);
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            if (r) return r->getTextSize(text, style);
-            return { (int)text.length() * (style.fontSize / 2), style.fontSize };
-        }
+        std::string text; TextStyle style;
+        TextImpl(std::string t, TextStyle s) : text(std::move(t)), style(std::move(s)) {}
+        void performLayout(IRenderer* r, SDL_Rect c) override { SDL_Point s = r->getTextSize(text, style); m_allocatedSize = { c.x, c.y, s.x, s.y }; }
+        void render(App* a, IRenderer* r) override { r->drawText(text, style, m_allocatedSize.x, m_allocatedSize.y); }
+        WidgetBody* hitTest(SDL_Point p) override { return nullptr; }
     };
     class Text : public Widget {
     public:
-        Text(const std::string& text = "", TextStyle style = {})
-            : Widget(std::make_shared<TextImpl>(text, style)) {
-        }
+        Text(const std::string& text = "", TextStyle style = {}) : Widget(std::make_shared<TextImpl>(text, style)) {}
+        Text(const std::string& text, int fontSize) : Widget(std::make_shared<TextImpl>(text, TextStyle{ fontSize })) {}
     };
 
     class ContainerImpl : public WidgetBody {
     public:
-        std::shared_ptr<WidgetBody> child;
-        Style style;
-        ContainerImpl(Widget childWidget, Style s) : style(s) {
-            child = childWidget.getImpl();
-            if (child) child->parent = this;
-        }
-
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            if (!child) return { style.padding.left + style.padding.right, style.padding.top + style.padding.bottom };
-            SDL_Point childConstraints = { c.x - (style.padding.left + style.padding.right), c.y - (style.padding.top + style.padding.bottom) };
-            SDL_Point childSize = child->getPreferredSize(r, childConstraints);
-            return { childSize.x + style.padding.left + style.padding.right, childSize.y + style.padding.top + style.padding.bottom };
-        }
-
-        void render(App* app, IRenderer* renderer, SDL_Rect s) override {
-            if (style.backgroundColor.a > 0) {
-                renderer->drawRect(s, style.backgroundColor, style.border.radius);
-            }
-            if (child) {
-                SDL_Rect childRect = { s.x + style.padding.left, s.y + style.padding.top, s.w - (style.padding.left + style.padding.right), s.h - (style.padding.top + style.padding.bottom) };
-                child->render(app, renderer, childRect);
-            }
-        }
-
-        void handleEvent(App* app, SDL_Event* event, SDL_Rect s) override {
-            if (child) {
-                SDL_Rect childRect = { s.x + style.padding.left, s.y + style.padding.top, s.w - (style.padding.left + style.padding.right), s.h - (style.padding.top + style.padding.bottom) };
-                child->handleEvent(app, event, childRect);
-            }
-        }
+        std::shared_ptr<WidgetBody> child; Style style;
+        ContainerImpl(Widget c, Style s) : style(std::move(s)) { child = c.getImpl(); if (child) child->parent = this; }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) child->performLayout(r, { c.x + style.padding.left, c.y + style.padding.top, c.w - (style.padding.left + style.padding.right), c.h - (style.padding.top + style.padding.bottom) }); }
+        void render(App* a, IRenderer* r) override { if (style.backgroundColor.a > 0) r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius); if (child) child->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override { if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr; if (child) return child->hitTest(p); return this; }
     };
     class Container : public Widget {
     public:
-        Container(Widget child, Style s = {}) : Widget(std::make_shared<ContainerImpl>(child, s)) {}
+        Container(Widget child, Style s = {}) : Widget(std::make_shared<ContainerImpl>(child, std::move(s))) {}
     };
 
-    class MultiChildLayoutImpl : public WidgetBody {
+    class ObxImpl : public WidgetBody, public RebuildRequester {
+        std::function<Widget()> m_builder;
+        std::shared_ptr<WidgetBody> m_child;
     public:
-        std::vector<std::shared_ptr<WidgetBody>> children;
-        MultiChildLayoutImpl(std::initializer_list<Widget> childrenWidgets) {
-            for (const auto& handle : childrenWidgets) {
-                if (auto impl = handle.getImpl()) {
-                    children.push_back(impl);
-                    impl->parent = this;
+        ObxImpl(std::function<Widget()> builder) : m_builder(std::move(builder)) {}
+        void initialize() { buildChild(); }
+        void buildChild() {
+            auto self_as_derived = std::static_pointer_cast<ObxImpl>(shared_from_this());
+            g_currentlyBuildingWidget = self_as_derived;
+            Widget new_widget = m_builder();
+            g_currentlyBuildingWidget.reset();
+            m_child = new_widget.getImpl();
+            if (m_child) m_child->parent = this;
+            if (App::instance()) App::instance()->markNeedsLayoutUpdate();
+        }
+        void rebuild() override { buildChild(); }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (m_child) m_child->performLayout(r, c); }
+        void render(App* a, IRenderer* r) override { if (m_child) m_child->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override { if (m_child) return m_child->hitTest(p); return nullptr; }
+        void handleEvent(App* a, SDL_Event* e) override { if (m_child) m_child->handleEvent(a, e); }
+    };
+    class Obx : public Widget {
+    public:
+        Obx(std::function<Widget()> builder) {
+            auto impl = std::make_shared<ObxImpl>(std::move(builder));
+            impl->initialize();
+            p_impl = impl;
+        }
+    };
+
+    class ColumnImpl : public WidgetBody {
+    public:
+        std::vector<std::shared_ptr<WidgetBody>> children; int spacing;
+        ColumnImpl(std::initializer_list<Widget> c, int s) : spacing(s) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            m_allocatedSize = c;
+            int y = c.y;
+            for (const auto& ch : children) {
+                if (!ch) continue;
+                int h = 20;
+                if (auto t = std::dynamic_pointer_cast<TextImpl>(ch)) {
+                    h = r->getTextSize(t->text, t->style).y;
+                }
+                ch->performLayout(r, { c.x, y, c.w, h });
+                y += ch->m_allocatedSize.h + spacing;
+            }
+        }
+        void render(App* a, IRenderer* r) override { for (const auto& c : children) if (c) c->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
+            for (const auto& child : children) {
+                if (child) {
+                    if (WidgetBody* target = child->hitTest(p)) {
+                        return target;
+                    }
                 }
             }
-        }
-    };
-
-    class ColumnImpl : public MultiChildLayoutImpl {
-    public:
-        int spacing;
-        ColumnImpl(std::initializer_list<Widget> c, int s) : MultiChildLayoutImpl(c), spacing(s) {}
-
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            int total_flex = 0;
-            int fixed_h = 0;
-            for (const auto& c : children) {
-                if (c->flex > 0) total_flex += c->flex;
-                else fixed_h += c->getPreferredSize(r, { s.w, 0 }).y;
-            }
-            fixed_h += std::max(0, (int)children.size() - 1) * spacing;
-            int remaining_h = s.h > fixed_h ? s.h - fixed_h : 0;
-            int current_y = s.y;
-            for (const auto& c : children) {
-                int child_h = (c->flex > 0) ? ((total_flex > 0) ? (remaining_h * c->flex / total_flex) : 0) : c->getPreferredSize(r, { s.w, 0 }).y;
-                c->render(a, r, { s.x, current_y, s.w, child_h });
-                current_y += child_h + spacing;
-            }
-        }
-        void handleEvent(App* a, SDL_Event* e, SDL_Rect s) override {
-            int total_flex = 0;
-            int fixed_h = 0;
-            for (const auto& c : children) {
-                if (c->flex > 0) total_flex += c->flex;
-                else fixed_h += c->getPreferredSize(nullptr, { s.w, 0 }).y;
-            }
-            fixed_h += std::max(0, (int)children.size() - 1) * spacing;
-            int remaining_h = s.h > fixed_h ? s.h - fixed_h : 0;
-            int current_y = s.y;
-            for (const auto& c : children) {
-                int child_h = (c->flex > 0) ? ((total_flex > 0) ? (remaining_h * c->flex / total_flex) : 0) : c->getPreferredSize(nullptr, { s.w, 0 }).y;
-                SDL_Rect childRect = { s.x, current_y, s.w, child_h };
-                c->handleEvent(a, e, childRect);
-                current_y += child_h + spacing;
-            }
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            int total_h = 0, max_w = 0;
-            for (size_t i = 0; i < children.size(); ++i) {
-                auto size = children[i]->getPreferredSize(r, c);
-                if (size.x > max_w) max_w = size.x;
-                total_h += size.y;
-                if (i < children.size() - 1) total_h += spacing;
-            }
-            return { max_w, total_h };
+            return nullptr;
         }
     };
     class Column : public Widget {
@@ -562,55 +452,22 @@ void showSnackBar(const std::string& message, const Style& style, SnackBarPositi
         Column(std::initializer_list<Widget> c, int s = 0) : Widget(std::make_shared<ColumnImpl>(c, s)) {}
     };
 
-    class RowImpl : public MultiChildLayoutImpl {
+    class RowImpl : public WidgetBody {
     public:
-        int spacing;
-        RowImpl(std::initializer_list<Widget> c, int s) : MultiChildLayoutImpl(c), spacing(s) {}
-
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            int total_flex = 0;
-            int fixed_w = 0;
-            for (const auto& c : children) {
-                if (c->flex > 0) total_flex += c->flex;
-                else fixed_w += c->getPreferredSize(r, { 0, s.h }).x;
+        std::vector<std::shared_ptr<WidgetBody>> children; int spacing;
+        RowImpl(std::initializer_list<Widget> c, int s) : spacing(s) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; int x = c.x; int w = children.empty() ? 0 : (c.w - (static_cast<int>(children.size()) - 1) * spacing) / static_cast<int>(children.size()); for (const auto& ch : children) { if (!ch) continue; ch->performLayout(r, { x, c.y, w, c.h }); x += w + spacing; } }
+        void render(App* a, IRenderer* r) override { for (const auto& c : children) if (c) c->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
+            for (const auto& child : children) {
+                if (child) {
+                    if (WidgetBody* target = child->hitTest(p)) {
+                        return target;
+                    }
+                }
             }
-            fixed_w += std::max(0, (int)children.size() - 1) * spacing;
-            int remaining_w = s.w > fixed_w ? s.w - fixed_w : 0;
-            int current_x = s.x;
-            for (const auto& c : children) {
-                int child_w = (c->flex > 0) ? ((total_flex > 0) ? (remaining_w * c->flex / total_flex) : 0) : c->getPreferredSize(r, { 0, s.h }).x;
-                c->render(a, r, { current_x, s.y, child_w, s.h });
-                current_x += child_w + spacing;
-            }
-        }
-
-        void handleEvent(App* a, SDL_Event* e, SDL_Rect s) override {
-            int total_flex = 0;
-            int fixed_w = 0;
-            for (const auto& c : children) {
-                if (c->flex > 0) total_flex += c->flex;
-                else fixed_w += c->getPreferredSize(nullptr, { 0, s.h }).x;
-            }
-            fixed_w += std::max(0, (int)children.size() - 1) * spacing;
-            int remaining_w = s.w > fixed_w ? s.w - fixed_w : 0;
-            int current_x = s.x;
-            for (const auto& c : children) {
-                int child_w = (c->flex > 0) ? ((total_flex > 0) ? (remaining_w * c->flex / total_flex) : 0) : c->getPreferredSize(nullptr, { 0, s.h }).x;
-                SDL_Rect childRect = { current_x, s.y, child_w, s.h };
-                c->handleEvent(a, e, childRect);
-                current_x += child_w + spacing;
-            }
-        }
-
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            int total_w = 0, max_h = 0;
-            for (size_t i = 0; i < children.size(); ++i) {
-                auto size = children[i]->getPreferredSize(r, c);
-                if (size.y > max_h) max_h = size.y;
-                total_w += size.x;
-                if (i < children.size() - 1) total_w += spacing;
-            }
-            return { total_w, max_h };
+            return nullptr;
         }
     };
     class Row : public Widget {
@@ -618,193 +475,132 @@ void showSnackBar(const std::string& message, const Style& style, SnackBarPositi
         Row(std::initializer_list<Widget> c, int s = 0) : Widget(std::make_shared<RowImpl>(c, s)) {}
     };
 
-    class StackImpl : public MultiChildLayoutImpl {
-    public:
-        StackImpl(std::initializer_list<Widget> c) : MultiChildLayoutImpl(c) {}
-
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            for (const auto& child : children) {
-                if (child) child->render(a, r, s);
-            }
-        }
-        void handleEvent(App* a, SDL_Event* e, SDL_Rect s) override {
-            for (auto it = children.rbegin(); it != children.rend(); ++it) {
-                if (*it) (*it)->handleEvent(a, e, s);
-            }
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            int max_w = 0, max_h = 0;
-            for (const auto& child : children) {
-                if (child) {
-                    auto size = child->getPreferredSize(r, c);
-                    if (size.x > max_w) max_w = size.x;
-                    if (size.y > max_h) max_h = size.y;
-                }
-            }
-            return { max_w, max_h };
-        }
-    };
-    class Stack : public Widget {
-    public:
-        Stack(std::initializer_list<Widget> c) : Widget(std::make_shared<StackImpl>(c)) {}
-    };
-
-    // =======================================================
-    // Interactive Widgets
-    // =======================================================
     class ButtonImpl : public WidgetBody {
     public:
-        std::shared_ptr<WidgetBody> child;
-        std::function<void()> onPressed;
-        Style style;
-        bool isHovered = false;
-
-        ButtonImpl(Widget childWidget, std::function<void()> onPressed, Style style)
-            : onPressed(onPressed), style(style) {
-            child = childWidget.getImpl();
-            if (child) child->parent = this;
-        }
-
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            Color bgColor = style.backgroundColor;
-            if (isHovered) {
-                bgColor.r = std::max(0, bgColor.r - 20);
-                bgColor.g = std::max(0, bgColor.g - 20);
-                bgColor.b = std::max(0, bgColor.b - 20);
+        std::shared_ptr<WidgetBody> child; std::function<void()> onPressed; Style style; bool isHovered = false;
+        ButtonImpl(Widget c, std::function<void()> o, Style s) : onPressed(std::move(o)), style(std::move(s)) { child = c.getImpl(); if (child) child->parent = this; }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { SDL_Point childSize = { 0,0 }; if (auto text_impl = std::dynamic_pointer_cast<TextImpl>(child)) { childSize = r->getTextSize(text_impl->text, text_impl->style); } int cX = c.x + (c.w - childSize.x) / 2; int cY = c.y + (c.h - childSize.y) / 2; child->performLayout(r, { cX, cY, childSize.x, childSize.y }); } }
+        void render(App* a, IRenderer* r) override { Color bg = style.backgroundColor; if (isHovered) { bg.r = (uint8_t)std::max(0, (int)bg.r - 20); bg.g = (uint8_t)std::max(0, (int)bg.g - 20); bg.b = (uint8_t)std::max(0, (int)bg.b - 20); } r->drawRect(m_allocatedSize, bg, style.border.radius); if (child) child->render(a, r); }
+        void handleEvent(App*, SDL_Event* e) override {
+            if (e->type == SDL_MOUSEMOTION) {
+                SDL_Point mousePos = { e->motion.x, e->motion.y };
+                isHovered = SDL_PointInRect(&mousePos, &m_allocatedSize);
             }
-            r->drawRect(s, bgColor, style.border.radius);
-            if (child) {
-                auto childSize = child->getPreferredSize(r, { s.w, s.h });
-                int cX = s.x + (s.w - childSize.x) / 2;
-                int cY = s.y + (s.h - childSize.y) / 2;
-                child->render(a, r, { cX, cY, childSize.x, childSize.y });
-            }
-        }
-
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            if (!child) return { 20, 20 };
-            auto childSize = child->getPreferredSize(r, c);
-            return { childSize.x + style.padding.left + style.padding.right, childSize.y + style.padding.top + style.padding.bottom };
-        }
-
-        void handleEvent(App*, SDL_Event* event, SDL_Rect s) override {
-            if (event->type == SDL_MOUSEMOTION || event->type == SDL_MOUSEBUTTONDOWN || event->type == SDL_MOUSEBUTTONUP) {
-                int mX, mY; SDL_GetMouseState(&mX, &mY);
-                SDL_Point p = { mX, mY };
-                isHovered = SDL_PointInRect(&p, &s);
-                if (event->type == SDL_MOUSEBUTTONDOWN && isHovered && onPressed) {
-                    onPressed();
-                }
+            if (e->type == SDL_MOUSEBUTTONDOWN && isHovered && onPressed) {
+                onPressed();
             }
         }
     };
-    class Button : public Widget {
-    public:
-        Button(Widget child, std::function<void()> onPressed, Style s = {})
-            : Widget(std::make_shared<ButtonImpl>(child, onPressed, s)) {
-        }
-    };
-
     class TextButton : public Widget {
     public:
-        TextButton(const std::string& text, std::function<void()> onPressed, Style s = {})
-            : Widget(std::make_shared<ButtonImpl>(Text(text, s.textStyle), onPressed, s)) {
-        }
+        TextButton(const std::string& t, std::function<void()> o, Style s = {}) : Widget(std::make_shared<ButtonImpl>(Text(t, s.textStyle), std::move(o), std::move(s))) {}
     };
 
     class TextBoxImpl : public WidgetBody {
         State<std::string>& state_ref;
+        std::string m_localText; // Local cache for text input
         std::string hintText;
         Style style;
         bool isFocused = false;
     public:
-        TextBoxImpl(State<std::string>& state, std::string hint, Style s)
-            : state_ref(state), hintText(hint), style(s) {
+        TextBoxImpl(State<std::string>& s, std::string h, Style st)
+            : state_ref(s), m_localText(s.get()), hintText(std::move(h)), style(std::move(st)) {
         }
+        // Inside the TextBoxImpl class in libfux.hpp
 
-        void handleEvent(App*, SDL_Event* event, SDL_Rect s) override {
-            if (event->type == SDL_MOUSEBUTTONDOWN) {
-                int mX, mY; SDL_GetMouseState(&mX, &mY);
-                SDL_Point p = { mX, mY };
-                isFocused = SDL_PointInRect(&p, &s);
-                if (isFocused) SDL_StartTextInput(); else SDL_StopTextInput();
-            }
+        ~TextBoxImpl() {
             if (isFocused) {
-                std::string currentText = state_ref.get();
+                SDL_StopTextInput();
+                // ADD THIS LINE: Tell the app to clear its pointer to this widget.
+                if (App::instance()) App::instance()->releaseFocus(this);
+            }
+        }
+
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            int h = r->getTextSize("Gg", style.textStyle).y; // Use a sample string for height
+            m_allocatedSize = { c.x, c.y, c.w, h + style.padding.top + style.padding.bottom };
+        }
+
+        void handleEvent(App* a, SDL_Event* e) override {
+            if (e->type == SDL_MOUSEBUTTONDOWN) {
+                SDL_Point mousePos = { e->button.x, e->button.y };
+                bool currentlyFocused = SDL_PointInRect(&mousePos, &m_allocatedSize);
+
+                if (currentlyFocused && !isFocused) {
+                    isFocused = true;
+                    SDL_StartTextInput();
+                    a->requestFocus(this);
+                }
+                else if (!currentlyFocused && isFocused) {
+                    isFocused = false;
+                    SDL_StopTextInput();
+                    a->releaseFocus(this);
+                }
+            }
+
+            if (isFocused) {
                 bool changed = false;
-                if (event->type == SDL_KEYDOWN && event->key.keysym.sym == SDLK_BACKSPACE && !currentText.empty()) {
-                    currentText.pop_back();
+                if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_BACKSPACE && !m_localText.empty()) {
+                    m_localText.pop_back();
                     changed = true;
                 }
-                else if (event->type == SDL_TEXTINPUT) {
-                    currentText += event->text.text;
+                else if (e->type == SDL_TEXTINPUT) {
+                    m_localText += e->text.text;
                     changed = true;
                 }
-                if (changed) state_ref.set(currentText);
+
+                if (changed) {
+                    state_ref.set(m_localText); // Update the global state
+                }
             }
         }
-        void render(App*, IRenderer* r, SDL_Rect s) override {
-            r->drawRect(s, style.backgroundColor, style.border.radius);
-            std::string text = state_ref.get();
-            std::string displayText = text.empty() ? hintText : text;
-            TextStyle currentTextStyle = style.textStyle;
-            if (text.empty()) currentTextStyle.color = Colors::grey;
 
-            r->drawText(displayText, currentTextStyle, s.x + style.padding.left, s.y + (s.h - r->getTextSize(displayText, currentTextStyle).y) / 2);
+        void render(App* a, IRenderer* r) override {
+            // Sync local text with the global state in case it was changed elsewhere
+            m_localText = state_ref.get();
 
+            r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius);
+
+            std::string displayText = m_localText.empty() ? hintText : m_localText;
+            TextStyle ts = style.textStyle;
+            if (m_localText.empty()) {
+                ts.color = Colors::grey; // Use a different color for hint text
+            }
+
+            SDL_Point tsz = r->getTextSize(displayText, ts);
+            // Vertically center the text
+            int textY = m_allocatedSize.y + (m_allocatedSize.h - tsz.y) / 2;
+            r->drawText(displayText, ts, m_allocatedSize.x + style.padding.left, textY);
+
+            // Draw a blinking cursor when focused
             if (isFocused && (SDL_GetTicks() / 500) % 2) {
-                auto textSize = r->getTextSize(text, currentTextStyle);
-                SDL_Rect cursor = { s.x + style.padding.left + textSize.x, s.y + style.padding.top, 2, s.h - (style.padding.top + style.padding.bottom) };
-                r->drawRect(cursor, currentTextStyle.color, 0);
+                SDL_Point textRenderSize = r->getTextSize(m_localText, style.textStyle);
+                SDL_Rect cursor = {
+                    m_allocatedSize.x + style.padding.left + textRenderSize.x,
+                    m_allocatedSize.y + style.padding.top,
+                    2,
+                    m_allocatedSize.h - (style.padding.top + style.padding.bottom)
+                };
+                r->drawRect(cursor, style.textStyle.color, {});
             }
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            int textHeight = style.textStyle.fontSize;
-            if (r) {
-                textHeight = r->getTextSize("Gg", style.textStyle).y;
-            }
-            return { c.x > 0 ? c.x : 200, textHeight + style.padding.top + style.padding.bottom };
         }
     };
+
     class TextBox : public Widget {
     public:
-        TextBox(State<std::string>& state, std::string hint = "Enter text...", Style s = {})
-            : Widget(std::make_shared<TextBoxImpl>(state, hint, s)) {
+        TextBox(State<std::string>& s, std::string h = "...", Style st = {})
+            : Widget(std::make_shared<TextBoxImpl>(s, std::move(h), std::move(st))) {
         }
     };
 
     class DialogBoxImpl : public WidgetBody {
         std::shared_ptr<WidgetBody> child;
     public:
-        DialogBoxImpl(Widget childWidget) {
-            child = childWidget.getImpl();
-            if (child) child->parent = this;
-        }
-        void handleEvent(App* a, SDL_Event* e, SDL_Rect s) override {
-            if (child) {
-                SDL_Point constraints = { s.w > 40 ? s.w - 40 : 0, s.h > 40 ? s.h - 40 : 0 };
-                auto childSize = child->getPreferredSize(nullptr, constraints);
-                int cX = s.x + (s.w - childSize.x) / 2;
-                int cY = s.y + (s.h - childSize.y) / 2;
-                SDL_Rect childRect = { cX, cY, childSize.x, childSize.y };
-                child->handleEvent(a, e, childRect);
-            }
-
-            if (e->type == SDL_MOUSEBUTTONDOWN) {
-                e->type = SDL_USEREVENT;
-            }
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override { return c; }
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            r->drawRect(s, { 0,0,0,128 }, 0); 
-            if (child) {
-                SDL_Point constraints = { s.w > 40 ? s.w - 40 : 0, s.h > 40 ? s.h - 40 : 0 };
-                auto childSize = child->getPreferredSize(r, constraints);
-                int cX = s.x + (s.w - childSize.x) / 2;
-                int cY = s.y + (s.h - childSize.y) / 2;
-                child->render(a, r, { cX, cY, childSize.x, childSize.y });
-            }
-        }
+        DialogBoxImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 300, ch = 150; child->performLayout(r, { c.x + (c.w - cw) / 2, c.y + (c.h - ch) / 2, cw, ch }); } }
+        void render(App* a, IRenderer* r) override { r->drawRect(m_allocatedSize, { 0,0,0,128 }, {}); if (child) child->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override { if (!child) return this; WidgetBody* t = child->hitTest(p); return t ? t : this; }
+        void handleEvent(App* a, SDL_Event* e) override { if (child) child->handleEvent(a, e); if (e->type == SDL_MOUSEBUTTONDOWN) e->type = SDL_USEREVENT; }
     };
     class DialogBox : public Widget {
     public:
@@ -812,66 +608,40 @@ void showSnackBar(const std::string& message, const Style& style, SnackBarPositi
     };
 
     class SnackBarImpl : public WidgetBody {
-        std::shared_ptr<WidgetBody> child;
-        SnackBarPosition position;
+        std::shared_ptr<WidgetBody> child; SnackBarPosition position;
     public:
-        SnackBarImpl(Widget childWidget, SnackBarPosition pos) : position(pos) {
-            child = childWidget.getImpl();
-            if (child) child->parent = this;
-        }
-
-        void handleEvent(App* a, SDL_Event* e, SDL_Rect s) override { /* SnackBar consumes no events */ }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override { return c; }
-
-        void render(App* a, IRenderer* r, SDL_Rect s) override {
-            if (child) {
-                SDL_Point constraints = { s.w > 40 ? s.w - 40 : 0, 50 };
-                auto childSize = child->getPreferredSize(r, constraints);
-                int cX = s.x + (s.w - childSize.x) / 2;
-
-                int cY = (position == SnackBarPosition::Bottom)
-                    ? s.y + s.h - childSize.y - 20
-                    : s.y + 20;
-
-                child->render(a, r, { cX, cY, childSize.x, childSize.y });
-            }
-        }
+        SnackBarImpl(Widget c, SnackBarPosition p) : position(p) { child = c.getImpl(); if (child) child->parent = this; }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 400, ch = 50; int cx = c.x + (c.w - cw) / 2; int cy = (position == SnackBarPosition::Bottom) ? c.y + c.h - ch - 20 : c.y + 20; child->performLayout(r, { cx, cy, cw, ch }); } }
+        void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override { return nullptr; }
     };
     class SnackBar : public Widget {
     public:
-        SnackBar(Widget child, SnackBarPosition position = SnackBarPosition::Bottom)
-            : Widget(std::make_shared<SnackBarImpl>(child, position)) {
-        }
+        SnackBar(Widget child, SnackBarPosition p = SnackBarPosition::Bottom) : Widget(std::make_shared<SnackBarImpl>(child, p)) {}
     };
 
-    class IfImpl : public WidgetBody {
-        std::shared_ptr<WidgetBody> internal_widget;
-    public:
-        IfImpl(State<bool>& condition, std::function<Widget()> builder) {
-            auto context_builder = ui::ContextBuilder<bool>([builder](bool show) -> ui::Widget {
-                if (show) return builder();
-                return ui::Widget();
-                });
-            auto context_provider = ui::ContextProvider<bool>(condition, context_builder);
-            internal_widget = context_provider.getImpl();
-            if (internal_widget) internal_widget->parent = this;
-        }
+    inline void showDialog(Widget dialogContent) { if (App::instance()) App::instance()->pushOverlay(DialogBox(dialogContent)); }
+    inline void AppContext::show(const std::string& message, const Style& style, SnackBarPosition position) {
+        if (!App::instance()) return;
+        auto snackBarWidget = SnackBar(Container(Text(message, style.textStyle), style), position);
+        App::instance()->pushOverlay(snackBarWidget);
+        App::instance()->addTimer(3000, [] { if (App::instance()) App::instance()->popOverlay(); });
+    }
+    inline void AppContext::showSnackBar(const std::string& message) {
+        Style defaultStyle; defaultStyle.backgroundColor = Colors::darkGrey; defaultStyle.textStyle.color = Colors::white; defaultStyle.padding = { 12, 18, 12, 18 }; defaultStyle.border.radius = BorderRadius::all(6.0);
+        show(message, defaultStyle, SnackBarPosition::Bottom);
+    }
+    inline void AppContext::showSnackBar(const std::string& message, const Style& style, SnackBarPosition position) {
+        show(message, style, position);
+    }
 
-        void render(App* app, IRenderer* r, SDL_Rect s) override {
-            if (internal_widget) internal_widget->render(app, r, s);
-        }
-        void handleEvent(App* app, SDL_Event* e, SDL_Rect s) override {
-            if (internal_widget) internal_widget->handleEvent(app, e, s);
-        }
-        SDL_Point getPreferredSize(IRenderer* r, SDL_Point c) override {
-            return internal_widget ? internal_widget->getPreferredSize(r, c) : SDL_Point{ 0,0 };
-        }
-    };
-    class If : public Widget {
+    class ScaffoldImpl : public ContainerImpl {
     public:
-        If(State<bool>& condition, std::function<Widget()> builder)
-            : Widget(std::make_shared<IfImpl>(condition, builder)) {
-        }
+        ScaffoldImpl(Widget child, Style style) : ContainerImpl(child, std::move(style)) {}
+    };
+    class Scaffold : public Widget {
+    public:
+        Scaffold(Widget child, Style s = {}) : Widget(std::make_shared<ScaffoldImpl>(child, std::move(s))) {}
     };
 
 } // namespace ui
