@@ -1,5 +1,5 @@
 // FUX UI Library - Creator Morteza Mansory
-// Version 0.4.0
+// Version 0.4.2
 // Still in development version keep your ears up, for the new version.
 //=----------------------------------------------=
 // Whats New in this Version:
