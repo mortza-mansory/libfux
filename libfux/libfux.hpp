@@ -19,6 +19,8 @@
 // Improved Snackbar Timer
 // In the new code, snackbar timers are managed centrally in the app’s main loop (App::run).
 
+//  Global Helper Functions for Cleaner API
+// In this new thing , i added some inline void function , to not using App::instance() anymore, so it would help you write cleaner and faster code.
 // And re coding all project means from 900 lines its decrease to ~620 lines! don't know should i celebrate or ...anyway.
 //=----------------------------------------------=
 #pragma once
@@ -54,6 +56,8 @@ namespace ui {
     class IRenderer;
     class SDLRenderer;
     class RebuildRequester;
+    class DialogBox;
+    class SnackBar;
 
     struct Color { uint8_t r, g, b, a = 255; };
     struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
@@ -114,13 +118,14 @@ namespace ui {
             m_value = newValue;
 
             std::set<std::shared_ptr<RebuildRequester>> unique_listeners;
-            for (const auto& weak_ptr : m_listeners) {
-                if (auto shared_ptr = weak_ptr.lock()) {
-                    unique_listeners.insert(shared_ptr);
-                }
-            }
-
-            m_listeners.clear();
+            m_listeners.erase(std::remove_if(m_listeners.begin(), m_listeners.end(),
+                [&](const std::weak_ptr<RebuildRequester>& weak_ptr) {
+                    if (auto shared_ptr = weak_ptr.lock()) {
+                        unique_listeners.insert(shared_ptr);
+                        return false; 
+                    }
+                    return true; 
+                }), m_listeners.end());
 
             for (const auto& listener : unique_listeners) {
                 listener->rebuild();
@@ -168,40 +173,22 @@ namespace ui {
 
     class App {
     public:
-        App(Widget root) : m_root_handle(root) { s_instance = this; }
-        ~App() {
-            m_renderer.reset();
-            if (m_window) SDL_DestroyWindow(m_window);
-            TTF_Quit();
-            SDL_Quit();
-            s_instance = nullptr;
-        }
-        void run(const std::string& title, bool resizable = false, SDL_Point size = { 800, 600 }) {
-            run(title, { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.x, size.y }, resizable);
-        }
-        void run(const std::string& title = "FUX App",
-            SDL_Rect size = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600 },
-            bool resizable = false,
-            Color backgroundColor = Colors::white,
-            const std::string& defaultFont = "arial.ttf");
+        App(Widget root);
+        ~App();
+
+        void run(const std::string& title = "FUX App", bool resizable = false, SDL_Point size = { 800, 600 });
+
         static App* instance() { return s_instance; }
-        void pushOverlay(Widget widget) {
-            m_overlayStack.push_back(widget.getImpl());
-            markNeedsLayoutUpdate();
-        }
-        void popOverlay() {
-            if (!m_overlayStack.empty()) {
-                m_overlayStack.pop_back();
-                markNeedsLayoutUpdate();
-            }
-        }
-        void addTimer(unsigned int ms, std::function<void()> callback) {
-            m_timers.push_back({ std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), std::move(callback) });
-        }
+
+        void pushOverlay(Widget widget);
+        void popOverlay();
+        void addTimer(unsigned int ms, std::function<void()> callback);
+
         void requestFocus(WidgetBody* widget) { m_focusedWidget = widget; }
         void releaseFocus(WidgetBody* widget) { if (m_focusedWidget == widget) m_focusedWidget = nullptr; }
         void markNeedsLayoutUpdate() { m_needs_layout_update = true; }
     private:
+        void internal_run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont);
         struct Timer { std::chrono::steady_clock::time_point expiryTime; std::function<void()> callback; };
         Widget m_root_handle;
         std::shared_ptr<WidgetBody> m_root_body;
@@ -277,7 +264,32 @@ namespace ui {
         }
     };
 
-    inline void App::run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont) {
+    inline App::App(Widget root) : m_root_handle(root) { s_instance = this; }
+    inline App::~App() {
+        m_renderer.reset();
+        if (m_window) SDL_DestroyWindow(m_window);
+        TTF_Quit();
+        SDL_Quit();
+        s_instance = nullptr;
+    }
+    inline void App::pushOverlay(Widget widget) {
+        m_overlayStack.push_back(widget.getImpl());
+        markNeedsLayoutUpdate();
+    }
+    inline void App::popOverlay() {
+        if (!m_overlayStack.empty()) {
+            m_overlayStack.pop_back();
+            markNeedsLayoutUpdate();
+        }
+    }
+    inline void App::addTimer(unsigned int ms, std::function<void()> callback) {
+        m_timers.push_back({ std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), std::move(callback) });
+    }
+    inline void App::run(const std::string& title, bool resizable, SDL_Point size) {
+        SDL_Rect window_rect = { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.x, size.y };
+        internal_run(title, window_rect, resizable, Colors::white, "arial.ttf");
+    }
+    inline void App::internal_run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont) {
         if (SDL_Init(SDL_INIT_VIDEO) < 0) return;
         if (TTF_Init() == -1) return;
 
@@ -289,7 +301,6 @@ namespace ui {
 
         bool running = true;
         while (running) {
-            // === TIMER HANDLING (FIXED) ===
             auto now = std::chrono::steady_clock::now();
             std::vector<std::function<void()>> callbacks_to_run;
 
@@ -306,7 +317,6 @@ namespace ui {
                 callback();
             }
 
-            // === EVENT HANDLING ===
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
                 if (event.type == SDL_QUIT) running = false;
@@ -316,9 +326,13 @@ namespace ui {
                 WidgetBody* target = nullptr;
 
                 if (!m_overlayStack.empty()) {
-                    target = m_overlayStack.back()->hitTest(mousePos);
+                    for (auto it = m_overlayStack.rbegin(); it != m_overlayStack.rend(); ++it) {
+                        target = (*it)->hitTest(mousePos);
+                        if (target) break;
+                    }
                 }
-                else if (m_root_body) {
+
+                if (!target && m_root_body) {
                     target = m_root_body->hitTest(mousePos);
                 }
 
@@ -330,7 +344,6 @@ namespace ui {
                 }
             }
 
-            // === LAYOUT & RENDERING ===
             if (m_needs_layout_update) {
                 int w, h; SDL_GetWindowSize(m_window, &w, &h); SDL_Rect windowRect = { 0, 0, w, h };
                 if (m_root_body) m_root_body->performLayout(m_renderer.get(), windowRect);
@@ -347,18 +360,7 @@ namespace ui {
         }
     }
 
-    class DialogBox;
-    inline void showDialog(Widget dialogContent);
-    class SnackBar;
-    class AppContext {
-    public:
-        static AppContext& instance() { static AppContext inst; return inst; }
-        void showSnackBar(const std::string& message);
-        void showSnackBar(const std::string& message, const Style& style, SnackBarPosition position = SnackBarPosition::Bottom);
-    private:
-        void show(const std::string& message, const Style& style, SnackBarPosition position);
-        AppContext() = default;
-    };
+    // === All Widgets ===
 
     class TextImpl : public WidgetBody {
     public:
@@ -416,6 +418,7 @@ namespace ui {
             p_impl = impl;
         }
     };
+    // Deduction guide was removed for compatibility. User must specify lambda return type.
 
     class ColumnImpl : public WidgetBody {
     public:
@@ -498,7 +501,7 @@ namespace ui {
 
     class TextBoxImpl : public WidgetBody {
         State<std::string>& state_ref;
-        std::string m_localText; // Local cache for text input
+        std::string m_localText;
         std::string hintText;
         Style style;
         bool isFocused = false;
@@ -506,26 +509,20 @@ namespace ui {
         TextBoxImpl(State<std::string>& s, std::string h, Style st)
             : state_ref(s), m_localText(s.get()), hintText(std::move(h)), style(std::move(st)) {
         }
-        // Inside the TextBoxImpl class in libfux.hpp
-
         ~TextBoxImpl() {
             if (isFocused) {
                 SDL_StopTextInput();
-                // ADD THIS LINE: Tell the app to clear its pointer to this widget.
                 if (App::instance()) App::instance()->releaseFocus(this);
             }
         }
-
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            int h = r->getTextSize("Gg", style.textStyle).y; // Use a sample string for height
+            int h = r->getTextSize("Gg", style.textStyle).y;
             m_allocatedSize = { c.x, c.y, c.w, h + style.padding.top + style.padding.bottom };
         }
-
         void handleEvent(App* a, SDL_Event* e) override {
             if (e->type == SDL_MOUSEBUTTONDOWN) {
                 SDL_Point mousePos = { e->button.x, e->button.y };
                 bool currentlyFocused = SDL_PointInRect(&mousePos, &m_allocatedSize);
-
                 if (currentlyFocused && !isFocused) {
                     isFocused = true;
                     SDL_StartTextInput();
@@ -537,7 +534,6 @@ namespace ui {
                     a->releaseFocus(this);
                 }
             }
-
             if (isFocused) {
                 bool changed = false;
                 if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_BACKSPACE && !m_localText.empty()) {
@@ -548,44 +544,26 @@ namespace ui {
                     m_localText += e->text.text;
                     changed = true;
                 }
-
                 if (changed) {
-                    state_ref.set(m_localText); // Update the global state
+                    state_ref.set(m_localText);
                 }
             }
         }
-
         void render(App* a, IRenderer* r) override {
-            // Sync local text with the global state in case it was changed elsewhere
             m_localText = state_ref.get();
-
             r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius);
-
             std::string displayText = m_localText.empty() ? hintText : m_localText;
             TextStyle ts = style.textStyle;
-            if (m_localText.empty()) {
-                ts.color = Colors::grey; // Use a different color for hint text
-            }
-
+            if (m_localText.empty()) ts.color = Colors::grey;
             SDL_Point tsz = r->getTextSize(displayText, ts);
-            // Vertically center the text
-            int textY = m_allocatedSize.y + (m_allocatedSize.h - tsz.y) / 2;
-            r->drawText(displayText, ts, m_allocatedSize.x + style.padding.left, textY);
-
-            // Draw a blinking cursor when focused
+            r->drawText(displayText, ts, m_allocatedSize.x + style.padding.left, m_allocatedSize.y + (m_allocatedSize.h - tsz.y) / 2);
             if (isFocused && (SDL_GetTicks() / 500) % 2) {
-                SDL_Point textRenderSize = r->getTextSize(m_localText, style.textStyle);
-                SDL_Rect cursor = {
-                    m_allocatedSize.x + style.padding.left + textRenderSize.x,
-                    m_allocatedSize.y + style.padding.top,
-                    2,
-                    m_allocatedSize.h - (style.padding.top + style.padding.bottom)
-                };
-                r->drawRect(cursor, style.textStyle.color, {});
+                SDL_Point trs = r->getTextSize(m_localText, style.textStyle);
+                SDL_Rect cursor = { m_allocatedSize.x + style.padding.left + trs.x, m_allocatedSize.y + style.padding.top, 2, m_allocatedSize.h - (style.padding.top + style.padding.bottom) };
+                r->drawRect(cursor, ts.color, {});
             }
         }
     };
-
     class TextBox : public Widget {
     public:
         TextBox(State<std::string>& s, std::string h = "...", Style st = {})
@@ -599,8 +577,20 @@ namespace ui {
         DialogBoxImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
         void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 300, ch = 150; child->performLayout(r, { c.x + (c.w - cw) / 2, c.y + (c.h - ch) / 2, cw, ch }); } }
         void render(App* a, IRenderer* r) override { r->drawRect(m_allocatedSize, { 0,0,0,128 }, {}); if (child) child->render(a, r); }
-        WidgetBody* hitTest(SDL_Point p) override { if (!child) return this; WidgetBody* t = child->hitTest(p); return t ? t : this; }
-        void handleEvent(App* a, SDL_Event* e) override { if (child) child->handleEvent(a, e); if (e->type == SDL_MOUSEBUTTONDOWN) e->type = SDL_USEREVENT; }
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
+            if (child) {
+                WidgetBody* t = child->hitTest(p);
+                if (t) return t;
+            }
+            return this;
+        }
+        void handleEvent(App* a, SDL_Event* e) override {
+            if (child) child->handleEvent(a, e);
+            if (e->type == SDL_MOUSEBUTTONDOWN) {
+                e->type = SDL_USEREVENT;
+            }
+        }
     };
     class DialogBox : public Widget {
     public:
@@ -620,21 +610,6 @@ namespace ui {
         SnackBar(Widget child, SnackBarPosition p = SnackBarPosition::Bottom) : Widget(std::make_shared<SnackBarImpl>(child, p)) {}
     };
 
-    inline void showDialog(Widget dialogContent) { if (App::instance()) App::instance()->pushOverlay(DialogBox(dialogContent)); }
-    inline void AppContext::show(const std::string& message, const Style& style, SnackBarPosition position) {
-        if (!App::instance()) return;
-        auto snackBarWidget = SnackBar(Container(Text(message, style.textStyle), style), position);
-        App::instance()->pushOverlay(snackBarWidget);
-        App::instance()->addTimer(3000, [] { if (App::instance()) App::instance()->popOverlay(); });
-    }
-    inline void AppContext::showSnackBar(const std::string& message) {
-        Style defaultStyle; defaultStyle.backgroundColor = Colors::darkGrey; defaultStyle.textStyle.color = Colors::white; defaultStyle.padding = { 12, 18, 12, 18 }; defaultStyle.border.radius = BorderRadius::all(6.0);
-        show(message, defaultStyle, SnackBarPosition::Bottom);
-    }
-    inline void AppContext::showSnackBar(const std::string& message, const Style& style, SnackBarPosition position) {
-        show(message, style, position);
-    }
-
     class ScaffoldImpl : public ContainerImpl {
     public:
         ScaffoldImpl(Widget child, Style style) : ContainerImpl(child, std::move(style)) {}
@@ -643,5 +618,28 @@ namespace ui {
     public:
         Scaffold(Widget child, Style s = {}) : Widget(std::make_shared<ScaffoldImpl>(child, std::move(s))) {}
     };
+
+    // === Global Helper Functions for Cleaner API ===
+    inline void popOverlay() {
+        if (App::instance()) App::instance()->popOverlay();
+    }
+
+    inline void showDialog(Widget dialogContent) {
+        if (App::instance()) App::instance()->pushOverlay(DialogBox(dialogContent));
+    }
+
+    inline void showSnackBar(const std::string& message) {
+        if (!App::instance()) return;
+
+        Style defaultStyle;
+        defaultStyle.backgroundColor = Colors::darkGrey;
+        defaultStyle.textStyle.color = Colors::white;
+        defaultStyle.padding = { 12, 18, 12, 18 };
+        defaultStyle.border.radius = BorderRadius::all(6.0);
+
+        auto snackBarWidget = SnackBar(Container(Text(message, defaultStyle.textStyle), defaultStyle));
+        App::instance()->pushOverlay(snackBarWidget);
+        App::instance()->addTimer(3000, [] { popOverlay(); });
+    }
 
 } // namespace ui
