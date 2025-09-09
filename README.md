@@ -23,4 +23,4 @@ The new version of the code is **much simpler and cleaner**. Here's a quick look
 Example: The main.cpp is your example only put it on your visual studio, config the SDL lib and enjoy power of simplify.
 
 Creator: Morteza Mansory
-Current Version: 0.4.9 { In Dev version patch 1 }
+Current Version: 0.5.2 beta { In Dev version patch 3 }
