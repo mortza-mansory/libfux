@@ -1,5 +1,5 @@
 // LibFux - Creator Morteza Mansory
-// Version 0.5.2 Patch 1 beta ( in development usable )
+// Version 0.5.2 Patch 3 beta ( in development usable )
 // This version expands the widget library and adds core new features.
 //=----------------------------------------------=
 // Whats New in this Version:
@@ -64,7 +64,7 @@ namespace ui {
     class RebuildRequester;
     class DialogBox;
     class SnackBar;
-    class PositionedImpl; 
+    class PositionedImpl;
 
     struct Color { uint8_t r, g, b, a = 255; };
     struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
@@ -199,7 +199,7 @@ namespace ui {
         void addTimer(unsigned int ms, std::function<void()> callback);
         void requestFocus(WidgetBody* newFocus) {
             if (m_focusedWidget == newFocus) {
-                return; 
+                return;
             }
             if (m_focusedWidget) {
                 m_focusedWidget->onFocusLost();
@@ -283,7 +283,7 @@ namespace ui {
                 std::cerr << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
                 std::cerr << "!!! CRITICAL: COULD NOT LOAD ANY FONT. TEXT WILL NOT RENDER. !!!" << std::endl;
                 std::cerr << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
-                m_fontCache[key] = nullptr; 
+                m_fontCache[key] = nullptr;
                 return nullptr;
             }
 
@@ -623,7 +623,7 @@ namespace ui {
 
     class ObxImpl : public WidgetBody, public RebuildRequester {
         std::function<Widget()> m_builder;
-    public:      
+    public:
         std::shared_ptr<WidgetBody> m_child;
         template<typename Func>
         ObxImpl(Func&& builder) : m_builder(std::forward<Func>(builder)) {}
@@ -723,7 +723,7 @@ namespace ui {
 
             int child_width_slice = (c.w > total_spacing) ? (c.w - total_spacing) / num_children : 0;
 
-            int max_h = 0; 
+            int max_h = 0;
 
             for (const auto& ch : children) {
                 if (!ch) continue;
@@ -755,7 +755,7 @@ namespace ui {
     };
 
     class CenterImpl : public WidgetBody {
-    public:        
+    public:
         std::shared_ptr<WidgetBody> child;
         CenterImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
         void performLayout(IRenderer* r, SDL_Rect c) override {
@@ -817,7 +817,7 @@ namespace ui {
         }
 
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            m_allocatedSize = c; 
+            m_allocatedSize = c;
             if (child) child->performLayout(r, m_allocatedSize);
         }
         void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
@@ -1051,7 +1051,7 @@ namespace ui {
     public:
         TextBoxImpl(State<std::string>& s, std::string h, Style st) : state_ref(s), m_localText(s.get()), hintText(std::move(h)), style(std::move(st)) {}
         ~TextBoxImpl() { if (isFocused) { SDL_StopTextInput(); if (App::instance()) App::instance()->releaseFocus(this); } }
-        void onFocusLost() override { 
+        void onFocusLost() override {
             if (isFocused) {
                 isFocused = false;
                 SDL_StopTextInput();
@@ -1086,7 +1086,7 @@ namespace ui {
             }
         }
         void render(App* a, IRenderer* r) override {
-            m_localText = state_ref.get(); 
+            m_localText = state_ref.get();
             r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius);
             std::string displayText = m_localText.empty() ? hintText : m_localText;
             TextStyle ts = style.textStyle;
@@ -1180,9 +1180,9 @@ namespace ui {
     };
 
     class ProgressBarImpl : public WidgetBody {
-        double m_progress; 
+        double m_progress;
     public:
-        ProgressBarImpl(double p) : m_progress(p) {} 
+        ProgressBarImpl(double p) : m_progress(p) {}
 
         void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = { c.x, c.y, c.w, 10 }; }
         void render(App* a, IRenderer* r) override {
@@ -1200,20 +1200,63 @@ namespace ui {
 
     // --- Overlays and Scaffolding ---
 
+// این بلوک کامل را در فایل libfux.hpp جایگزین کلاس DialogBoxImpl قبلی کنید
+
     class DialogBoxImpl : public WidgetBody {
         std::shared_ptr<WidgetBody> child;
     public:
-        DialogBoxImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 300, ch = 150; child->performLayout(r, { c.x + (c.w - cw) / 2, c.y + (c.h - ch) / 2, cw, ch }); } }
-        void render(App* a, IRenderer* r) override { r->drawRect(m_allocatedSize, { 0,0,0,128 }, {}); if (child) child->render(a, r); }
-        WidgetBody* hitTest(SDL_Point p) override {
-            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
-            if (child) { WidgetBody* t = child->hitTest(p); if (t) return t; }
-            return this;
+        DialogBoxImpl(Widget c) {
+            child = c.getImpl();
+            if (child) child->parent = this;
         }
+
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            // پس‌زمینه نیمه‌شفاف کل صفحه را می‌گیرد
+            m_allocatedSize = c;
+
+            if (child) {
+                // ۱. حداکثر اندازه برای محتوای دیالوگ تعریف می‌کنیم
+                // ** FIX: Add static_cast to remove conversion warnings **
+                int max_w = static_cast<int>(c.w * 0.8);
+                int max_h = static_cast<int>(c.h * 0.8);
+
+                // ۲. از فرزند می‌پرسیم چقدر فضا نیاز دارد
+                child->performLayout(r, { 0, 0, max_w, max_h });
+
+                // ۳. اندازه واقعی مورد نیاز فرزند را دریافت می‌کنیم
+                int child_w = child->m_allocatedSize.w;
+                int child_h = child->m_allocatedSize.h;
+
+                // ۴. فرزند را بر اساس اندازه واقعی‌اش در وسط صفحه قرار می‌دهیم
+                int child_x = c.x + (c.w - child_w) / 2;
+                int child_y = c.y + (c.h - child_h) / 2;
+
+                // ۵. موقعیت نهایی فرزند را تنظیم می‌کنیم
+                child->m_allocatedSize.x = child_x;
+                child->m_allocatedSize.y = child_y;
+            }
+        }
+
+        void render(App* a, IRenderer* r) override {
+            r->drawRect(m_allocatedSize, { 0,0,0,128 }, {});
+            if (child) child->render(a, r);
+        }
+
+        // ** FIX: Only one definition of hitTest, render, and handleEvent **
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!child) return this; // If no child, the whole dialog is clickable
+
+            WidgetBody* target = child->hitTest(p);
+            if (target) return target; // If click is inside the child, return child
+
+            // If click is outside the child but on the dialog background, consume the event
+            return SDL_PointInRect(&p, &m_allocatedSize) ? this : nullptr;
+        }
+
         void handleEvent(App* a, SDL_Event* e) override {
-            if (child) child->handleEvent(a, e);
-            if (e->type == SDL_MOUSEBUTTONDOWN) { e->type = SDL_USEREVENT; }
+            if (child) {
+                child->handleEvent(a, e);
+            }
         }
     };
     class DialogBox : public Widget {
@@ -1293,7 +1336,7 @@ namespace ui {
     inline void showDialog(Widget dialogContent) {
         if (App::instance()) App::instance()->pushOverlay(DialogBox(dialogContent));
     }
-    
+
     inline void showSnackBar(const std::string& message) {
         if (!App::instance()) return;
         Style defaultStyle;
