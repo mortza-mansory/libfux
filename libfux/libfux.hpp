@@ -1,5 +1,5 @@
 // LibFux - Creator Morteza Mansory
-// Version 0.5.0
+// Version 0.5.2 
 // This version expands the widget library and adds core new features.
 //=----------------------------------------------=
 // Whats New in this Version:
@@ -25,21 +25,32 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <SDL_image.h>
+
 #include <string>
 #include <vector>
 #include <memory>
 #include <functional>
 #include <initializer_list>
+
 #include <iostream>
+
 #include <map>
 #include <algorithm>
+
 #include <any>
 #include <set>
 #include <typeinfo>
+
 #include <chrono>
 #include <thread>
 #include <utility>
+
 #include <optional>
+
+inline void print_rect(const std::string& name, const SDL_Rect& r) {
+    std::cout << "[DEBUG] " << name << ": { x=" << r.x << ", y=" << r.y << ", w=" << r.w << ", h=" << r.h << " }" << std::endl;
+}
+
 
 namespace ui {
 
@@ -51,7 +62,7 @@ namespace ui {
     class RebuildRequester;
     class DialogBox;
     class SnackBar;
-    class PositionedImpl; // Forward declaration
+    class PositionedImpl; 
 
     struct Color { uint8_t r, g, b, a = 255; };
     struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
@@ -113,7 +124,7 @@ namespace ui {
         }
 
         void set(T newValue) {
-            if (m_value == newValue) return;
+            std::cout << "[DEBUG] State changed. Notifying listeners." << std::endl;
             m_value = newValue;
 
             std::set<std::shared_ptr<RebuildRequester>> unique_listeners;
@@ -161,6 +172,8 @@ namespace ui {
             return SDL_PointInRect(&point, &m_allocatedSize) ? this : nullptr;
         }
         virtual void handleEvent(App* app, SDL_Event* event) {}
+        virtual void onFocusLost() {}
+        virtual std::string getTypeName() const { return typeid(*this).name(); }
     };
 
     class Widget {
@@ -182,8 +195,16 @@ namespace ui {
         void pushOverlay(Widget widget);
         void popOverlay();
         void addTimer(unsigned int ms, std::function<void()> callback);
-        void requestFocus(WidgetBody* widget) { m_focusedWidget = widget; }
-        void releaseFocus(WidgetBody* widget) { if (m_focusedWidget == widget) m_focusedWidget = nullptr; }
+        void requestFocus(WidgetBody* newFocus) {
+            if (m_focusedWidget == newFocus) {
+                return; 
+            }
+            if (m_focusedWidget) {
+                m_focusedWidget->onFocusLost();
+            }
+
+            m_focusedWidget = newFocus;
+        }        void releaseFocus(WidgetBody* widget) { if (m_focusedWidget == widget) m_focusedWidget = nullptr; }
         void markNeedsLayoutUpdate() { m_needs_layout_update = true; }
     private:
         void internal_run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont);
@@ -222,22 +243,50 @@ namespace ui {
 
         TTF_Font* getFont(const std::string& fontFile, int size) {
             std::string actualFontFile = fontFile.empty() ? m_defaultFontFile : fontFile;
-            if (actualFontFile.empty()) return nullptr;
-            std::string key = actualFontFile + std::to_string(size);
-            if (m_fontCache.find(key) == m_fontCache.end()) {
-                TTF_Font* font = TTF_OpenFont(actualFontFile.c_str(), size);
-                if (!font) {
-                    std::cerr << "WARN: Failed to load font '" << actualFontFile << "'. Trying fallbacks." << std::endl;
-                    // Windows
-                    font = TTF_OpenFont("C:/Windows/Fonts/Arial.ttf", size);
-                    // macOS
-                    if (!font) font = TTF_OpenFont("/System/Library/Fonts/Supplemental/Arial.ttf", size);
-                    // Linux
-                    if (!font) font = TTF_OpenFont("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", size);
-                    if (!font) { std::cerr << "CRITICAL: Could not load ANY font." << std::endl; return nullptr; }
-                }
-                m_fontCache[key] = font;
+
+            if (actualFontFile.empty()) {
+                actualFontFile = "Arial.ttf";
+                std::cout << "[DEBUG] No font specified, trying default '" << actualFontFile << "'" << std::endl;
             }
+
+            std::string key = actualFontFile + std::to_string(size);
+            if (m_fontCache.find(key) != m_fontCache.end()) {
+                return m_fontCache[key];
+            }
+
+            std::cout << "[DEBUG] Caching new font. Key: '" << key << "'" << std::endl;
+            TTF_Font* font = TTF_OpenFont(actualFontFile.c_str(), size);
+
+            if (!font) {
+                std::cerr << "[ERROR] Failed to load font '" << actualFontFile << "'. SDL_ttf Error: " << TTF_GetError() << ". Trying fallbacks." << std::endl;
+                const char* fallbacks[] = {
+                    "C:/Windows/Fonts/Arial.ttf",
+                    "/System/Library/Fonts/Supplemental/Arial.ttf",
+                    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"
+                };
+                for (const char* fallback_path : fallbacks) {
+                    std::cout << "[DEBUG] Trying fallback font: '" << fallback_path << "'" << std::endl;
+                    font = TTF_OpenFont(fallback_path, size);
+                    if (font) {
+                        std::cout << "[INFO] Successfully loaded fallback font '" << fallback_path << "'." << std::endl;
+                        break;
+                    }
+                    else {
+                        std::cerr << "[ERROR] Fallback failed. SDL_ttf Error: " << TTF_GetError() << std::endl;
+                    }
+                }
+            }
+
+            if (!font) {
+                std::cerr << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
+                std::cerr << "!!! CRITICAL: COULD NOT LOAD ANY FONT. TEXT WILL NOT RENDER. !!!" << std::endl;
+                std::cerr << "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
+                m_fontCache[key] = nullptr; 
+                return nullptr;
+            }
+
+            std::cout << "[INFO] Successfully loaded and cached font '" << actualFontFile << "'." << std::endl;
+            m_fontCache[key] = font;
             return m_fontCache[key];
         }
     public:
@@ -290,10 +339,25 @@ namespace ui {
 
         void drawText(const std::string& text, const TextStyle& style, int x, int y) override {
             if (text.empty()) return;
-            TTF_Font* font = getFont(style.fontFile, style.fontSize); if (!font) return;
+            TTF_Font* font = getFont(style.fontFile, style.fontSize);
+            if (!font) {
+                return;
+            }
+
             SDL_Color c = { style.color.r, style.color.g, style.color.b, style.color.a };
-            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), c); if (!surface) return;
+            SDL_Surface* surface = TTF_RenderUTF8_Blended(font, text.c_str(), c);
+            if (!surface) {
+                std::cerr << "[ERROR] TTF_RenderUTF8_Blended failed for text '" << text << "'. SDL_ttf Error: " << TTF_GetError() << std::endl;
+                return;
+            }
+
             SDL_Texture* texture = SDL_CreateTextureFromSurface(m_renderer, surface);
+            if (!texture) {
+                std::cerr << "[ERROR] SDL_CreateTextureFromSurface failed. SDL Error: " << SDL_GetError() << std::endl;
+                SDL_FreeSurface(surface);
+                return;
+            }
+
             SDL_Rect dstRect = { x, y, surface->w, surface->h };
             SDL_RenderCopy(m_renderer, texture, nullptr, &dstRect);
             SDL_DestroyTexture(texture);
@@ -303,9 +367,15 @@ namespace ui {
         SDL_Point getTextSize(const std::string& text, const TextStyle& style) override {
             if (text.empty()) return { 0, style.fontSize };
             TTF_Font* font = getFont(style.fontFile, style.fontSize);
-            if (!font) return { 0, style.fontSize };
+            if (!font) {
+                std::cerr << "[ERROR] Cannot get text size for '" << text << "' because font is null." << std::endl;
+                return { 0, 0 };
+            }
             int w, h;
-            TTF_SizeText(font, text.c_str(), &w, &h);
+            if (TTF_SizeText(font, text.c_str(), &w, &h) != 0) {
+                std::cerr << "[ERROR] TTF_SizeText failed. SDL_ttf Error: " << TTF_GetError() << std::endl;
+                return { 0, 0 };
+            }
             return { w, h };
         }
 
@@ -315,7 +385,7 @@ namespace ui {
             }
             SDL_Texture* texture = IMG_LoadTexture(m_renderer, path.c_str());
             if (!texture) {
-                std::cerr << "Error: Failed to load image " << path << " - " << IMG_GetError() << std::endl;
+                std::cerr << "[ERROR] Failed to load image " << path << " - " << IMG_GetError() << std::endl;
                 return nullptr;
             }
             m_imageCache[path] = texture;
@@ -340,7 +410,7 @@ namespace ui {
     inline App::~App() {
         m_renderer.reset();
         if (m_window) SDL_DestroyWindow(m_window);
-        IMG_Quit(); 
+        IMG_Quit();
         TTF_Quit();
         SDL_Quit();
         s_instance = nullptr;
@@ -348,49 +418,52 @@ namespace ui {
     inline void App::pushOverlay(Widget widget) { m_overlayStack.push_back(widget.getImpl()); markNeedsLayoutUpdate(); }
     inline void App::popOverlay() { if (!m_overlayStack.empty()) { m_overlayStack.pop_back(); markNeedsLayoutUpdate(); } }
     inline void App::addTimer(unsigned int ms, std::function<void()> callback) { m_timers.push_back({ std::chrono::steady_clock::now() + std::chrono::milliseconds(ms), std::move(callback) }); }
-    inline void App::run(const std::string& title, bool resizable, SDL_Point size) { internal_run(title, { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.x, size.y }, resizable, Colors::white, ""); }
+    inline void App::run(const std::string& title, bool resizable, SDL_Point size) { internal_run(title, { SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.x, size.y }, resizable, Colors::white, "Arial.ttf"); }
     inline void App::internal_run(const std::string& title, SDL_Rect size, bool resizable, Color backgroundColor, const std::string& defaultFont) {
-        // --- Robust Initialization with Error Logging ---
         if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-            std::cerr << "FATAL ERROR: SDL_Init failed: " << SDL_GetError() << std::endl;
+            std::cerr << "[FATAL] SDL_Init failed: " << SDL_GetError() << std::endl;
             return;
         }
 
         if (TTF_Init() == -1) {
-            std::cerr << "FATAL ERROR: TTF_Init failed: " << TTF_GetError() << std::endl;
+            std::cerr << "[FATAL] TTF_Init failed: " << TTF_GetError() << std::endl;
             SDL_Quit();
             return;
         }
 
         if (!(IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG))) {
-            std::cerr << "FATAL ERROR: IMG_Init failed: " << IMG_GetError() << std::endl;
+            std::cerr << "[FATAL] IMG_Init failed: " << IMG_GetError() << std::endl;
             TTF_Quit();
             SDL_Quit();
             return;
         }
+        std::cout << "[INFO] SDL, TTF, and IMG initialized successfully." << std::endl;
 
         m_window = SDL_CreateWindow(title.c_str(), size.x, size.y, size.w, size.h, SDL_WINDOW_SHOWN | (resizable ? SDL_WINDOW_RESIZABLE : 0));
         if (!m_window) {
-            std::cerr << "FATAL ERROR: SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
+            std::cerr << "[FATAL] SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
             IMG_Quit();
             TTF_Quit();
             SDL_Quit();
             return;
         }
+        std::cout << "[INFO] Window created successfully." << std::endl;
 
         m_renderer = std::make_unique<SDLRenderer>(defaultFont);
         if (!m_renderer->init(m_window)) {
-            std::cerr << "FATAL ERROR: m_renderer->init failed: " << SDL_GetError() << std::endl;
+            std::cerr << "[FATAL] m_renderer->init failed: " << SDL_GetError() << std::endl;
             SDL_DestroyWindow(m_window);
             IMG_Quit();
             TTF_Quit();
             SDL_Quit();
             return;
         }
+        std::cout << "[INFO] Renderer created successfully." << std::endl;
 
         m_root_body = m_root_handle.getImpl();
 
         bool running = true;
+        std::cout << "[INFO] Entering main loop." << std::endl;
         while (running) {
             auto now = std::chrono::steady_clock::now();
             std::vector<std::function<void()>> callbacks_to_run;
@@ -407,14 +480,15 @@ namespace ui {
 
             SDL_Event event;
             while (SDL_PollEvent(&event)) {
-                // --- START: DIAGNOSTIC TEST FOR IMMEDIATE QUIT ---
                 if (event.type == SDL_QUIT) {
-                    std::cout << "DEBUG: SDL_QUIT event received!" << std::endl;
-                    // The next line is commented out ON PURPOSE for this test.
-                    // running = false; 
-                    continue; // Skip the rest of the loop to ignore the QUIT event.
+                    running = false;
+                    continue;
                 }
-                // --- END: DIAGNOSTIC TEST ---
+
+                if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_RESIZED) {
+                    std::cout << "[DEBUG] Window resized, marking for layout update." << std::endl;
+                    markNeedsLayoutUpdate();
+                }
 
                 if (m_needs_layout_update) continue;
 
@@ -452,16 +526,18 @@ namespace ui {
             }
 
             if (m_needs_layout_update) {
+                std::cout << "[INFO] Performing layout update..." << std::endl;
                 int w, h;
                 SDL_GetWindowSize(m_window, &w, &h);
                 SDL_Rect windowRect = { 0, 0, w, h };
+                print_rect("Window Constraints", windowRect);
                 if (m_root_body) m_root_body->performLayout(m_renderer.get(), windowRect);
                 for (const auto& overlay : m_overlayStack) {
                     overlay->performLayout(m_renderer.get(), windowRect);
                 }
                 m_needs_layout_update = false;
+                std::cout << "[INFO] Layout update finished." << std::endl;
             }
-
             m_renderer->clear(backgroundColor);
             if (m_root_body) m_root_body->render(this, m_renderer.get());
             for (const auto& overlay : m_overlayStack) {
@@ -471,17 +547,25 @@ namespace ui {
 
             SDL_Delay(16);
         }
+        std::cout << "[INFO] Exiting main loop." << std::endl;
     }
     // === All Widgets ===
-
-    // --- Foundational Widgets ---
 
     class TextImpl : public WidgetBody {
     public:
         std::string text; TextStyle style;
         TextImpl(std::string t, TextStyle s) : text(std::move(t)), style(std::move(s)) {}
-        void performLayout(IRenderer* r, SDL_Rect c) override { SDL_Point s = r->getTextSize(text, style); m_allocatedSize = { c.x, c.y, s.x, s.y }; }
-        void render(App* a, IRenderer* r) override { r->drawText(text, style, m_allocatedSize.x, m_allocatedSize.y); }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            SDL_Point s = r->getTextSize(text, style);
+            m_allocatedSize = { c.x, c.y, s.x, s.y };
+            std::cout << "[Layout] TextImpl ('" << text << "'): ";
+            print_rect("allocated", m_allocatedSize);
+        }
+        void render(App* a, IRenderer* r) override {
+            if (m_allocatedSize.w > 0 && m_allocatedSize.h > 0) {
+                r->drawText(text, style, m_allocatedSize.x, m_allocatedSize.y);
+            }
+        }
         WidgetBody* hitTest(SDL_Point p) override { return nullptr; }
     };
     class Text : public Widget {
@@ -494,8 +578,40 @@ namespace ui {
     public:
         std::shared_ptr<WidgetBody> child; Style style;
         ContainerImpl(Widget c, Style s) : style(std::move(s)) { child = c.getImpl(); if (child) child->parent = this; }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) child->performLayout(r, { c.x + style.padding.left, c.y + style.padding.top, c.w - (style.padding.left + style.padding.right), c.h - (style.padding.top + style.padding.bottom) }); }
-        void render(App* a, IRenderer* r) override { if (style.backgroundColor.a > 0) r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius); if (child) child->render(a, r); }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            m_allocatedSize = c;
+
+            SDL_Rect child_constraints = {
+                c.x + style.padding.left,
+                c.y + style.padding.top,
+                c.w - (style.padding.left + style.padding.right),
+                c.h - (style.padding.top + style.padding.bottom)
+            };
+
+            if (child) {
+                child->performLayout(r, child_constraints);
+
+                bool isHeightUnbounded = (c.h >= 9999);
+                if (isHeightUnbounded) {
+                    m_allocatedSize.h = child->m_allocatedSize.h + style.padding.top + style.padding.bottom;
+                }
+            }
+            else {
+                bool isHeightUnbounded = (c.h >= 9999);
+                if (isHeightUnbounded) {
+                    m_allocatedSize.h = style.padding.top + style.padding.bottom;
+                }
+            }
+
+            std::cout << "[Layout] ContainerImpl: ";
+            print_rect("allocated", m_allocatedSize);
+        }
+        void render(App* a, IRenderer* r) override {
+            if (style.backgroundColor.a > 0) {
+                r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius);
+            }
+            if (child) child->render(a, r);
+        }
         WidgetBody* hitTest(SDL_Point p) override { if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr; return child ? child->hitTest(p) : this; }
     };
     class Container : public Widget {
@@ -505,12 +621,13 @@ namespace ui {
 
     class ObxImpl : public WidgetBody, public RebuildRequester {
         std::function<Widget()> m_builder;
+    public:      
         std::shared_ptr<WidgetBody> m_child;
-    public:
         template<typename Func>
         ObxImpl(Func&& builder) : m_builder(std::forward<Func>(builder)) {}
         void initialize() { buildChild(); }
         void buildChild() {
+            std::cout << "[DEBUG] Obx is rebuilding its child." << std::endl;
             auto self_as_derived = std::static_pointer_cast<ObxImpl>(shared_from_this());
             g_currentlyBuildingWidget = self_as_derived;
             Widget new_widget = m_builder();
@@ -520,8 +637,15 @@ namespace ui {
             if (App::instance()) App::instance()->markNeedsLayoutUpdate();
         }
         void rebuild() override { buildChild(); }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (m_child) m_child->performLayout(r, c); }
-        void render(App* a, IRenderer* r) override { if (m_child) m_child->render(a, r); }
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            if (m_child) {
+                m_child->performLayout(r, c);
+                m_allocatedSize = m_child->m_allocatedSize;
+            }
+            else {
+                m_allocatedSize = { c.x, c.y, 0, 0 };
+            }
+        }        void render(App* a, IRenderer* r) override { if (m_child) m_child->render(a, r); }
         WidgetBody* hitTest(SDL_Point p) override { return m_child ? m_child->hitTest(p) : nullptr; }
         void handleEvent(App* a, SDL_Event* e) override { if (m_child) m_child->handleEvent(a, e); }
     };
@@ -542,13 +666,28 @@ namespace ui {
         std::vector<std::shared_ptr<WidgetBody>> children; int spacing;
         ColumnImpl(std::initializer_list<Widget> c, int s) : spacing(s) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            m_allocatedSize = c;
-            int y = c.y;
+
+            m_allocatedSize.x = c.x;
+            m_allocatedSize.y = c.y;
+            m_allocatedSize.w = c.w;
+
+            std::cout << "[Layout] ColumnImpl: ";
+            print_rect("constraints", c);
+
+            int current_y = c.y;
             for (const auto& ch : children) {
                 if (!ch) continue;
-                ch->performLayout(r, { c.x, y, c.w, c.h - (y - c.y) }); // Give remaining space
-                y += ch->m_allocatedSize.h + spacing;
+
+                ch->performLayout(r, { c.x, current_y, c.w, 9999 });
+
+                current_y += ch->m_allocatedSize.h + spacing;
             }
+
+            int total_height = current_y - c.y;
+            if (!children.empty()) {
+                total_height -= spacing;
+            }
+            m_allocatedSize.h = total_height;
         }
         void render(App* a, IRenderer* r) override { for (const auto& c : children) if (c) c->render(a, r); }
         WidgetBody* hitTest(SDL_Point p) override {
@@ -570,17 +709,35 @@ namespace ui {
         RowImpl(std::initializer_list<Widget> c, int s) : spacing(s) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
         void performLayout(IRenderer* r, SDL_Rect c) override {
             m_allocatedSize = c;
+
             int x = c.x;
-            if (children.empty()) return;
+            if (children.empty()) {
+                m_allocatedSize.h = 0;
+                return;
+            }
+
             int num_children = static_cast<int>(children.size());
             int total_spacing = spacing * (num_children - 1);
-            int child_width = (c.w - total_spacing) / num_children;
+
+            int child_width_slice = (c.w > total_spacing) ? (c.w - total_spacing) / num_children : 0;
+
+            int max_h = 0; 
+
             for (const auto& ch : children) {
                 if (!ch) continue;
-                ch->performLayout(r, { x, c.y, child_width, c.h });
-                x += child_width + spacing;
+
+                ch->performLayout(r, { x, c.y, child_width_slice, 9999 });
+
+                if (ch->m_allocatedSize.h > max_h) {
+                    max_h = ch->m_allocatedSize.h;
+                }
+
+                x += child_width_slice + spacing;
             }
+
+            m_allocatedSize.h = max_h;
         }
+
         void render(App* a, IRenderer* r) override { for (const auto& c : children) if (c) c->render(a, r); }
         WidgetBody* hitTest(SDL_Point p) override {
             if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
@@ -596,18 +753,26 @@ namespace ui {
     };
 
     class CenterImpl : public WidgetBody {
+    public:        
         std::shared_ptr<WidgetBody> child;
-    public:
         CenterImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            m_allocatedSize = c;
+            std::cout << "[Layout] CenterImpl: ";
+            print_rect("constraints", c);
+
             if (child) {
-                child->performLayout(r, c); // Let child determine its own size first
+                child->performLayout(r, c);
                 int child_w = child->m_allocatedSize.w;
                 int child_h = child->m_allocatedSize.h;
+
+                m_allocatedSize = { c.x, c.y, c.w, child_h };
+
                 int child_x = c.x + (c.w - child_w) / 2;
-                int child_y = c.y + (c.h - child_h) / 2;
-                child->m_allocatedSize = { child_x, child_y, child_w, child_h };
+                child->m_allocatedSize.x = child_x;
+                child->m_allocatedSize.y = c.y;
+            }
+            else {
+                m_allocatedSize = { c.x, c.y, c.w, 0 };
             }
         }
         void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
@@ -625,7 +790,7 @@ namespace ui {
     public:
         std::vector<std::shared_ptr<WidgetBody>> children;
         StackImpl(std::initializer_list<Widget> c) { for (const auto& w : c) if (auto i = w.getImpl()) { children.push_back(i); i->parent = this; } }
-        void performLayout(IRenderer* r, SDL_Rect c) override; // Defined after PositionedImpl
+        void performLayout(IRenderer* r, SDL_Rect c) override;
         void render(App* a, IRenderer* r) override { for (const auto& ch : children) if (ch) ch->render(a, r); }
         WidgetBody* hitTest(SDL_Point p) override {
             if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
@@ -650,7 +815,7 @@ namespace ui {
         }
 
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            m_allocatedSize = c; // Will be set by StackImpl
+            m_allocatedSize = c; 
             if (child) child->performLayout(r, m_allocatedSize);
         }
         void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
@@ -667,18 +832,33 @@ namespace ui {
     };
 
     inline void StackImpl::performLayout(IRenderer* r, SDL_Rect c) {
-        m_allocatedSize = c;
+        int max_w = 0;
+        int max_h = 0;
+
+        for (const auto& ch : children) {
+            if (!ch || std::dynamic_pointer_cast<PositionedImpl>(ch)) {
+                continue;
+            }
+            ch->performLayout(r, { c.x, c.y, c.w, 0 });
+            if (ch->m_allocatedSize.w > max_w) max_w = ch->m_allocatedSize.w;
+            if (ch->m_allocatedSize.h > max_h) max_h = ch->m_allocatedSize.h;
+        }
+
+        m_allocatedSize = { c.x, c.y, max_w, max_h };
+
         for (const auto& ch : children) {
             if (!ch) continue;
+
             if (auto pos_impl = std::dynamic_pointer_cast<PositionedImpl>(ch)) {
-                int x = c.x + (pos_impl->left.has_value() ? *pos_impl->left : 0);
-                int y = c.y + (pos_impl->top.has_value() ? *pos_impl->top : 0);
-                int w = c.w - (pos_impl->left.has_value() ? *pos_impl->left : 0) - (pos_impl->right.has_value() ? *pos_impl->right : 0);
-                int h = c.h - (pos_impl->top.has_value() ? *pos_impl->top : 0) - (pos_impl->bottom.has_value() ? *pos_impl->bottom : 0);
+                int x = m_allocatedSize.x + (pos_impl->left.has_value() ? *pos_impl->left : 0);
+                int y = m_allocatedSize.y + (pos_impl->top.has_value() ? *pos_impl->top : 0);
+                int w = m_allocatedSize.w - (pos_impl->left.has_value() ? *pos_impl->left : 0) - (pos_impl->right.has_value() ? *pos_impl->right : 0);
+                int h = m_allocatedSize.h - (pos_impl->top.has_value() ? *pos_impl->top : 0) - (pos_impl->bottom.has_value() ? *pos_impl->bottom : 0);
                 ch->performLayout(r, { x, y, w, h });
             }
             else {
-                ch->performLayout(r, c); // Non-positioned children take full space
+                ch->m_allocatedSize.x = m_allocatedSize.x;
+                ch->m_allocatedSize.y = m_allocatedSize.y;
             }
         }
     }
@@ -687,60 +867,72 @@ namespace ui {
         std::shared_ptr<WidgetBody> child;
         int scrollY = 0;
         int contentHeight = 0;
+    private:
+        void applyOffsetToDescendants(WidgetBody* body, int dy, std::vector<std::pair<WidgetBody*, SDL_Rect>>& originalRects);
     public:
         ScrollViewImpl(Widget c) { child = c.getImpl(); if (child) child->parent = this; }
+
         void performLayout(IRenderer* r, SDL_Rect c) override {
             m_allocatedSize = c;
             if (child) {
-                // Let the child determine its full height, constrained by our width
                 child->performLayout(r, { c.x, c.y, c.w, 9999 });
                 contentHeight = child->m_allocatedSize.h;
             }
-        }
-        void handleEvent(App* a, SDL_Event* e) override {
-            // Only scroll if the mouse is over the scroll view
-            SDL_Point mousePos;
-            SDL_GetMouseState(&mousePos.x, &mousePos.y);
-            if (SDL_PointInRect(&mousePos, &m_allocatedSize)) {
-                if (e->type == SDL_MOUSEWHEEL) {
-                    scrollY += e->wheel.y * -20; // Adjust scroll sensitivity here
-                    scrollY = std::max(0, scrollY);
-                    scrollY = std::min(scrollY, std::max(0, contentHeight - m_allocatedSize.h));
-                }
-                if (child) {
-                    child->handleEvent(a, e);
-                }
+            else {
+                contentHeight = 0;
             }
         }
-        void render(App* a, IRenderer* r) override {
-            if (!child) return;
 
-            // Use the new public getter method to access the renderer
-            SDL_RenderSetClipRect(static_cast<SDLRenderer*>(r)->getSDLRenderer(), &m_allocatedSize);
-
-            auto original_pos = child->m_allocatedSize;
-            child->m_allocatedSize.y = m_allocatedSize.y - scrollY;
-            child->render(a, r);
-            child->m_allocatedSize = original_pos; // Restore position
-
-            SDL_RenderSetClipRect(static_cast<SDLRenderer*>(r)->getSDLRenderer(), NULL);
-        }
-        WidgetBody* hitTest(SDL_Point p) override {
-            if (!SDL_PointInRect(&p, &m_allocatedSize)) return nullptr;
-            // Adjust the hit test point for scrolling, but don't check the child if it's out of view
-            SDL_Point adjusted_p = p;
-            adjusted_p.y += scrollY;
+        void handleEvent(App* a, SDL_Event* e) override {
+            if (e->type == SDL_MOUSEWHEEL) {
+                scrollY += e->wheel.y * -20;
+                scrollY = std::max(0, scrollY);
+                scrollY = std::min(scrollY, std::max(0, contentHeight - m_allocatedSize.h));
+            }
 
             if (child) {
+                SDL_Point mousePos;
+                if (e->type == SDL_MOUSEMOTION) {
+                    mousePos = { e->motion.x, e->motion.y };
+                }
+                else if (e->type == SDL_MOUSEBUTTONDOWN || e->type == SDL_MOUSEBUTTONUP) {
+                    mousePos = { e->button.x, e->button.y };
+                }
+                else {
+                    SDL_GetMouseState(&mousePos.x, &mousePos.y);
+                }
+
+                SDL_Point adjusted_p = mousePos;
+                adjusted_p.y += scrollY;
                 WidgetBody* target = child->hitTest(adjusted_p);
-                // Only return a valid target if its visible area is within the scroll view's bounds
-                if (target && target->m_allocatedSize.y + target->m_allocatedSize.h > m_allocatedSize.y && target->m_allocatedSize.y < m_allocatedSize.y + m_allocatedSize.h) {
-                    return target;
+                if (target) {
+                    target->handleEvent(a, e);
                 }
             }
-            // If no child is hit, the scroll view itself is the target
-            return this;
         }
+
+        void render(App* a, IRenderer* r) override {
+            if (!child) return;
+            SDL_RenderSetClipRect(static_cast<SDLRenderer*>(r)->getSDLRenderer(), &m_allocatedSize);
+            std::vector<std::pair<WidgetBody*, SDL_Rect>> originalRects;
+            applyOffsetToDescendants(child.get(), -scrollY, originalRects);
+            child->render(a, r);
+            for (const auto& pair : originalRects) {
+                pair.first->m_allocatedSize = pair.second;
+            }
+            SDL_RenderSetClipRect(static_cast<SDLRenderer*>(r)->getSDLRenderer(), NULL);
+        }
+
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (SDL_PointInRect(&p, &m_allocatedSize)) {
+                return this;
+            }
+            return nullptr;
+        }
+    };
+    class ScrollView : public Widget {
+    public:
+        ScrollView(Widget child) : Widget(std::make_shared<ScrollViewImpl>(child)) {}
     };
 
     // --- Visual Widgets ---
@@ -788,16 +980,38 @@ namespace ui {
         std::shared_ptr<WidgetBody> child; std::function<void()> onPressed; Style style; bool isHovered = false;
         ButtonImpl(Widget c, std::function<void()> o, Style s) : onPressed(std::move(o)), style(std::move(s)) { child = c.getImpl(); if (child) child->parent = this; }
         void performLayout(IRenderer* r, SDL_Rect c) override {
-            m_allocatedSize = c;
             if (child) {
                 child->performLayout(r, c);
                 SDL_Point childSize = { child->m_allocatedSize.w, child->m_allocatedSize.h };
-                int cX = c.x + (c.w - childSize.x) / 2;
-                int cY = c.y + (c.h - childSize.y) / 2;
+
+                m_allocatedSize.w = childSize.x + style.padding.left + style.padding.right;
+                m_allocatedSize.h = childSize.y + style.padding.top + style.padding.bottom;
+                m_allocatedSize.x = c.x;
+                m_allocatedSize.y = c.y;
+
+                int cX = m_allocatedSize.x + style.padding.left;
+                int cY = m_allocatedSize.y + style.padding.top;
                 child->m_allocatedSize = { cX, cY, childSize.x, childSize.y };
+
             }
+            else {
+                m_allocatedSize = c;
+            }
+            std::cout << "[Layout] ButtonImpl: ";
+            print_rect("allocated", m_allocatedSize);
         }
-        void render(App* a, IRenderer* r) override { Color bg = style.backgroundColor; if (isHovered) { bg.r = (uint8_t)std::max(0, (int)bg.r - 20); bg.g = (uint8_t)std::max(0, (int)bg.g - 20); bg.b = (uint8_t)std::max(0, (int)bg.b - 20); } r->drawRect(m_allocatedSize, bg, style.border.radius); if (child) child->render(a, r); }
+        void render(App* a, IRenderer* r) override {
+            Color bg = style.backgroundColor;
+            if (isHovered) {
+                bg.r = (uint8_t)std::max(0, (int)bg.r - 20);
+                bg.g = (uint8_t)std::max(0, (int)bg.g - 20);
+                bg.b = (uint8_t)std::max(0, (int)bg.b - 20);
+            }
+            if (m_allocatedSize.w > 0 && m_allocatedSize.h > 0) {
+                r->drawRect(m_allocatedSize, bg, style.border.radius);
+            }
+            if (child) child->render(a, r);
+        }
         void handleEvent(App*, SDL_Event* e) override {
             if (e->type == SDL_MOUSEMOTION) {
                 SDL_Point mousePos = { e->motion.x, e->motion.y };
@@ -806,6 +1020,7 @@ namespace ui {
             if (e->type == SDL_MOUSEBUTTONDOWN) {
                 SDL_Point mousePos = { e->button.x, e->button.y };
                 if (isHovered && onPressed && SDL_PointInRect(&mousePos, &m_allocatedSize)) {
+                    std::cout << "[EVENT] Button pressed!" << std::endl;
                     onPressed();
                 }
             }
@@ -829,23 +1044,42 @@ namespace ui {
     public:
         TextBoxImpl(State<std::string>& s, std::string h, Style st) : state_ref(s), m_localText(s.get()), hintText(std::move(h)), style(std::move(st)) {}
         ~TextBoxImpl() { if (isFocused) { SDL_StopTextInput(); if (App::instance()) App::instance()->releaseFocus(this); } }
+        void onFocusLost() override { 
+            if (isFocused) {
+                isFocused = false;
+                SDL_StopTextInput();
+            }
+        }
         void performLayout(IRenderer* r, SDL_Rect c) override { int h = r->getTextSize("Gg", style.textStyle).y; m_allocatedSize = { c.x, c.y, c.w, h + style.padding.top + style.padding.bottom }; }
         void handleEvent(App* a, SDL_Event* e) override {
             if (e->type == SDL_MOUSEBUTTONDOWN) {
                 SDL_Point mousePos = { e->button.x, e->button.y };
-                bool currentlyFocused = SDL_PointInRect(&mousePos, &m_allocatedSize);
-                if (currentlyFocused && !isFocused) { isFocused = true; SDL_StartTextInput(); a->requestFocus(this); }
-                else if (!currentlyFocused && isFocused) { isFocused = false; SDL_StopTextInput(); a->releaseFocus(this); }
+                if (SDL_PointInRect(&mousePos, &m_allocatedSize)) {
+                    a->requestFocus(this);
+                    if (!isFocused) {
+                        isFocused = true;
+                        SDL_StartTextInput();
+                    }
+                }
             }
+
             if (isFocused) {
                 bool changed = false;
-                if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_BACKSPACE && !m_localText.empty()) { m_localText.pop_back(); changed = true; }
-                else if (e->type == SDL_TEXTINPUT) { m_localText += e->text.text; changed = true; }
-                if (changed) { state_ref.set(m_localText); }
+                if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_BACKSPACE && !m_localText.empty()) {
+                    m_localText.pop_back();
+                    changed = true;
+                }
+                else if (e->type == SDL_TEXTINPUT) {
+                    m_localText += e->text.text;
+                    changed = true;
+                }
+                if (changed) {
+                    state_ref.set(m_localText);
+                }
             }
         }
         void render(App* a, IRenderer* r) override {
-            m_localText = state_ref.get(); // Sync with state
+            m_localText = state_ref.get(); 
             r->drawRect(m_allocatedSize, style.backgroundColor, style.border.radius);
             std::string displayText = m_localText.empty() ? hintText : m_localText;
             TextStyle ts = style.textStyle;
@@ -881,7 +1115,7 @@ namespace ui {
         }
         void render(App* a, IRenderer* r) override {
             Color boxColor = isHovered ? Colors::lightBlue : Colors::grey;
-            r->drawRect(m_allocatedSize, { 0,0,0,0 }, {}); // Transparent bg
+            r->drawRect(m_allocatedSize, { 0,0,0,0 }, {});
             r->drawLine(m_allocatedSize.x, m_allocatedSize.y, m_allocatedSize.x + m_allocatedSize.w, m_allocatedSize.y, boxColor);
             r->drawLine(m_allocatedSize.x + m_allocatedSize.w, m_allocatedSize.y, m_allocatedSize.x + m_allocatedSize.w, m_allocatedSize.y + m_allocatedSize.h, boxColor);
             r->drawLine(m_allocatedSize.x + m_allocatedSize.w, m_allocatedSize.y + m_allocatedSize.h, m_allocatedSize.x, m_allocatedSize.y + m_allocatedSize.h, boxColor);
@@ -939,20 +1173,22 @@ namespace ui {
     };
 
     class ProgressBarImpl : public WidgetBody {
-        State<double>& state_ref; // Value between 0.0 and 1.0
+        double m_progress; 
     public:
-        ProgressBarImpl(State<double>& s) : state_ref(s) {}
+        ProgressBarImpl(double p) : m_progress(p) {} 
+
         void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = { c.x, c.y, c.w, 10 }; }
         void render(App* a, IRenderer* r) override {
             r->drawRect(m_allocatedSize, Colors::grey, BorderRadius::all(5));
-            double progress = std::max(0.0, std::min(1.0, state_ref.get()));
+            double progress = std::max(0.0, std::min(1.0, m_progress));
+
             SDL_Rect progressRect = { m_allocatedSize.x, m_allocatedSize.y, static_cast<int>(m_allocatedSize.w * progress), m_allocatedSize.h };
             r->drawRect(progressRect, Colors::green, BorderRadius::all(5));
         }
     };
     class ProgressBar : public Widget {
     public:
-        ProgressBar(State<double>& state) : Widget(std::make_shared<ProgressBarImpl>(state)) {}
+        ProgressBar(double progress) : Widget(std::make_shared<ProgressBarImpl>(progress)) {}
     };
 
     // --- Overlays and Scaffolding ---
@@ -1011,14 +1247,23 @@ namespace ui {
         void performLayout(IRenderer* r, SDL_Rect c) override {
             m_allocatedSize.x = c.x;
             m_allocatedSize.y = c.y;
-            m_allocatedSize.w = (size.width != -1) ? size.width : c.w;
-            m_allocatedSize.h = (size.height != -1) ? size.height : c.h;
 
+            m_allocatedSize.w = (size.width != -1) ? size.width : c.w;
+
+            if (size.height != -1) {
+                m_allocatedSize.h = size.height;
+            }
+            else if (child) {
+                child->performLayout(r, { c.x, c.y, m_allocatedSize.w, c.h });
+                m_allocatedSize.h = child->m_allocatedSize.h;
+            }
+            else {
+                m_allocatedSize.h = 0;
+            }
             if (child) {
                 child->performLayout(r, m_allocatedSize);
             }
         }
-
         void render(App* a, IRenderer* r) override {
             if (child) child->render(a, r);
         }
@@ -1033,7 +1278,6 @@ namespace ui {
     public:
         SizedBox(Widget child, Size s) : Widget(std::make_shared<SizedBoxImpl>(child, s)) {}
     };
-    // === Global Helper Functions for Cleaner API ===
 
     inline void popOverlay() {
         if (App::instance()) App::instance()->popOverlay();
@@ -1042,7 +1286,7 @@ namespace ui {
     inline void showDialog(Widget dialogContent) {
         if (App::instance()) App::instance()->pushOverlay(DialogBox(dialogContent));
     }
-
+    
     inline void showSnackBar(const std::string& message) {
         if (!App::instance()) return;
         Style defaultStyle;
@@ -1054,5 +1298,36 @@ namespace ui {
         App::instance()->pushOverlay(snackBarWidget);
         App::instance()->addTimer(3000, [] { popOverlay(); });
     }
+    inline void ScrollViewImpl::applyOffsetToDescendants(WidgetBody* body, int dy, std::vector<std::pair<WidgetBody*, SDL_Rect>>& originalRects) {
+        if (!body) return;
 
+        originalRects.push_back({ body, body->m_allocatedSize });
+        body->m_allocatedSize.y += dy;
+
+        if (auto impl = dynamic_cast<ContainerImpl*>(body)) {
+            applyOffsetToDescendants(impl->child.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<ColumnImpl*>(body)) {
+            for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<RowImpl*>(body)) {
+            for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<StackImpl*>(body)) {
+            for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<CenterImpl*>(body)) {
+            applyOffsetToDescendants(impl->child.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<SizedBoxImpl*>(body)) {
+            applyOffsetToDescendants(impl->child.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<ObxImpl*>(body)) {
+            // CORRECTED: Use m_child for ObxImpl
+            applyOffsetToDescendants(impl->m_child.get(), dy, originalRects);
+        }
+        else if (auto impl = dynamic_cast<ButtonImpl*>(body)) {
+            applyOffsetToDescendants(impl->child.get(), dy, originalRects);
+        }
+    }
 } // namespace ui
