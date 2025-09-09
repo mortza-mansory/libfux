@@ -1,5 +1,5 @@
 // LibFux - Creator Morteza Mansory
-// Version 0.5.2 
+// Version 0.5.2 Patch 1 beta ( in development usable )
 // This version expands the widget library and adds core new features.
 //=----------------------------------------------=
 // Whats New in this Version:
@@ -13,6 +13,8 @@
 // Enhanced Robustness: Implemented detailed error logging during initialization and added more cross-platform font fallbacks.
 
 // Interactive Element Overhaul: Added new interactive elements like Slider, Checkbox, and ScrollView for richer user input.
+
+// Patch 1: Fixing the ScrollView focus mode.
 //=----------------------------------------------=
 #pragma once
 
@@ -888,25 +890,30 @@ namespace ui {
                 scrollY += e->wheel.y * -20;
                 scrollY = std::max(0, scrollY);
                 scrollY = std::min(scrollY, std::max(0, contentHeight - m_allocatedSize.h));
+                return;
             }
 
             if (child) {
-                SDL_Point mousePos;
+                SDL_Event adjusted_event = *e;
+                bool is_mouse_event = false;
+
                 if (e->type == SDL_MOUSEMOTION) {
-                    mousePos = { e->motion.x, e->motion.y };
+                    adjusted_event.motion.y += scrollY;
+                    is_mouse_event = true;
                 }
                 else if (e->type == SDL_MOUSEBUTTONDOWN || e->type == SDL_MOUSEBUTTONUP) {
-                    mousePos = { e->button.x, e->button.y };
+                    adjusted_event.button.y += scrollY;
+                    is_mouse_event = true;
                 }
-                else {
-                    SDL_GetMouseState(&mousePos.x, &mousePos.y);
-                }
+                if (is_mouse_event) {
+                    SDL_Point mousePos = { e->button.x, e->button.y };
+                    SDL_Point adjusted_p = mousePos;
+                    adjusted_p.y += scrollY;
 
-                SDL_Point adjusted_p = mousePos;
-                adjusted_p.y += scrollY;
-                WidgetBody* target = child->hitTest(adjusted_p);
-                if (target) {
-                    target->handleEvent(a, e);
+                    WidgetBody* target = child->hitTest(adjusted_p);
+                    if (target) {
+                        target->handleEvent(a, &adjusted_event);
+                    }
                 }
             }
         }
