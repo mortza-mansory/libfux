@@ -6,7 +6,6 @@ Regular updates will be applied , if i have some amount of free times..
 Creator - mortza mansory
 Lib version: 0.5.2
 */    
-
 #include "libfux.hpp"
 
 using namespace ui;
@@ -44,8 +43,6 @@ int main(int argc, char* argv[]) {
 
 
                         Title("Layout Widgets"),
-
-
 
                         Row({
                             Container(Text("Item 1"), {.backgroundColor = {220, 220, 220}, .padding = {8, 8, 8, 8}}),
