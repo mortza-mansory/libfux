@@ -4,87 +4,126 @@ Yeah you hear right, we bring the GetX statemanagement soon in this lib too,
 Keep updated, you can see lasted updates to this lib syntax just from this main.cpp file.
 Regular updates will be applied , if i have some amount of free times..
 Creator - mortza mansory
-Lib version: 0.4.2
+Lib version: 0.5.2
 */    
+
 #include "libfux.hpp"
 
-ui::State<std::string> textBoxContent("");
+using namespace ui;
 
-void onShowDialogPressed() {
-    ui::Style buttonStyle;
-    buttonStyle.backgroundColor = ui::Colors::lightBlue;
-    buttonStyle.textStyle.color = ui::Colors::white;
-    buttonStyle.padding = { 10, 10, 10, 10 };
-    buttonStyle.border.radius = ui::BorderRadius::all(8.0);
-
-    ui::Style dialogContainerStyle;
-    dialogContainerStyle.backgroundColor = ui::Colors::white;
-    dialogContainerStyle.padding = { 20, 20, 20, 20 };
-    dialogContainerStyle.border.radius = ui::BorderRadius::all(12.0);
-
-    ui::showDialog(
-        ui::Container(
-            ui::Column({
-                ui::Text("This is a Dialog"),
-                ui::Text("Click OK to close."),
-                ui::TextButton("OK", [] {
-                    ui::popOverlay();
-                }, buttonStyle)
-                }, 10),
-            dialogContainerStyle
-        )
-    );
-}
-
-void onShowSnackBarPressed() {
-    ui::showSnackBar("This is a simple SnackBar!");
+Widget Title(const std::string& text) {
+    return Text(text, { 20, Colors::darkGrey });
 }
 
 int main(int argc, char* argv[]) {
-    ui::Style primaryButtonStyle;
-    primaryButtonStyle.backgroundColor = ui::Colors::blue;
-    primaryButtonStyle.textStyle.color = ui::Colors::white;
-    primaryButtonStyle.padding = { 10, 20, 10, 20 };
-    primaryButtonStyle.border.radius = ui::BorderRadius::all(8.0);
+    State<std::string> textValue("You can edit this!");
+    State<bool> isChecked(true);
+    State<double> sliderValue(75.0);
+    State<int> counter(0);
 
-    ui::Style successButtonStyle;
-    successButtonStyle.backgroundColor = ui::Colors::green;
-    successButtonStyle.textStyle.color = ui::Colors::white;
-    successButtonStyle.padding = { 10, 20, 10, 20 };
-    successButtonStyle.border.radius = ui::BorderRadius::all(8.0);
+    auto widgetGallery =
+        Scaffold(
+            Container(
+                ScrollView( 
+                    Column({
+                        Title("Foundational Widgets"),
+                        Text("This is a simple Text widget."),
+                        SizedBox({}, {-1, 5}), 
+                        Text("This Text has a different font size.", 24),
+                        SizedBox({}, {-1, 10}),
+                        Container(
+                            Text("This Text is inside a blue Container with padding.", {16, Colors::white}),
+                            Style{
+                                .backgroundColor = Colors::lightBlue,
+                                .border = {.radius = BorderRadius::all(8.0)},
+                                .padding = {10, 15, 10, 15}}),
 
-    ui::Style mainScaffoldStyle;
-    mainScaffoldStyle.padding = { 20, 20, 20, 20 };
+                        SizedBox({}, {-1, 20}),
+                        Divider(),
+                        SizedBox({}, {-1, 20}),
 
-    ui::Style textBoxStyle;
-    textBoxStyle.backgroundColor = { 230, 230, 230 };
-    textBoxStyle.padding = { 10, 10, 10, 10 };
-    textBoxStyle.border.radius = ui::BorderRadius::all(4.0);
 
-    ui::App app(
-        ui::Scaffold(
-            ui::Column({
-                ui::Text("FUX Library Demo", {24}),
-                ui::TextBox(textBoxContent, "Type something here...", textBoxStyle),
+                        Title("Layout Widgets"),
 
-                ui::Obx([]() -> ui::Widget {
-                    std::string text = textBoxContent.get();
-                    if (text.empty()) {
-                        return ui::Widget(); // Return an empty widget
-                    }
-                    return ui::Text("You wrote: " + text);
-                }),
 
-                ui::Row({
-                    ui::TextButton("Show Dialog", onShowDialogPressed, primaryButtonStyle),
-                    ui::TextButton("Show SnackBar", onShowSnackBarPressed, successButtonStyle)
-                }, 10)
-                }, 15),
-            mainScaffoldStyle
-        )
-    );
 
-    app.run("FUX Demo 3.0", true, { 600, 450 });
+                        Row({
+                            Container(Text("Item 1"), {.backgroundColor = {220, 220, 220}, .padding = {8, 8, 8, 8}}),
+                            Container(Text("Item 2"), {.backgroundColor = {220, 220, 220}, .padding = {8, 8, 8, 8}}),
+                            Container(Text("Item 3"), {.backgroundColor = {220, 220, 220}, .padding = {8, 8, 8, 8}})
+                        }, 10),
+                        SizedBox({}, {-1, 10}),
+                        Center(Text("This text is Centered.")),
+                        SizedBox({}, {-1, 10}),
+                        Stack({
+                            SizedBox(Widget(), {120, 120}),
+                            Container(Widget(), {.backgroundColor = Colors::red}),
+                            Positioned(Container(Widget(), {.backgroundColor = {0, 0, 255, 150}}), 10, 10, 10, 10),
+                            Positioned(Text("Positioned", {16, Colors::white}), 50, 20)
+                        }),
+
+                        SizedBox({}, {-1, 20}),
+                        Divider(),
+                        SizedBox({}, {-1, 20}),
+
+                        Title("Interactive Widgets"),
+                        TextBox(textValue, "Enter text here...", {.backgroundColor = {240, 240, 240}, .padding = {8, 8, 8, 8}}),
+                        SizedBox({}, {-1, 10}),
+                        Row({Checkbox(isChecked), Text("Enable Feature")}, 10),
+                        SizedBox({}, {-1, 10}),
+                        Slider(sliderValue, 0.0, 100.0),
+                        SizedBox({}, {-1, 10}),
+                        TextButton("Increment Counter", [&]() { counter.set(counter.get() + 1); }),
+                        SizedBox({}, {-1, 10}),
+                    //    IconButton("icon.png", [&]() { showSnackBar("Icon button pressed!"); }, {.padding = {5, 5, 5, 5}}),
+
+                        SizedBox({}, {-1, 20}),
+                        Divider(),
+                        SizedBox({}, {-1, 20}),
+
+                        Title("Reactive Widgets (Obx)"),
+                        Obx([&]() { return Text("Button pressed " + std::to_string(counter.get()) + " times."); }),
+                        Obx([&]() { return ProgressBar(sliderValue.get() / 100.0); }),
+                        Obx([&]() {
+                            if (isChecked.get()) {
+                                return Text("The feature is currently ENABLED.", {16, Colors::green});
+                            }
+ else {
+  return Text("The feature is currently DISABLED.", {16, Colors::red});
+}
+}),
+
+SizedBox({}, {-1, 20}),
+Divider(),
+SizedBox({}, {-1, 20}),
+
+Title("Overlays"),
+Row({
+    TextButton("Show Dialog", []() {
+        showDialog(
+            Container(
+                Column({
+                    Text("This is a Dialog Box"),
+                    SizedBox({}, {-1, 20}),
+                    TextButton("Close", []() { popOverlay(); }, {.backgroundColor = Colors::blue, .textStyle = {16, Colors::white}})
+                }, 10),
+                Style{
+                    .backgroundColor = Colors::white,
+                    .border = {.radius = BorderRadius::all(10.0)},
+                    .padding = {20, 20, 20, 20}}
+            )
+        );
+    }),
+    TextButton("Show SnackBar", []() { showSnackBar("This is a SnackBar message!"); })
+}, 10)
+                        }, 15)
+                ),
+                Style{ .backgroundColor = {245, 245, 245}, .padding = {20, 20, 20, 20} }
+            )
+        );
+
+    App myApp(widgetGallery);
+    myApp.run("LibFux Widget Gallery", true, { 600, 800 });
 
     return 0;
 }
