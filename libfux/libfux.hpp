@@ -1,5 +1,5 @@
 // LibFux - Creator Morteza Mansory
-// Version 0.5.2 Patch 3 beta ( in development usable )
+// Version 0.5.2 Patch 4 beta ( in development usable )
 // This version expands the widget library and adds core new features.
 //=----------------------------------------------=
 // Whats New in this Version:
@@ -65,6 +65,7 @@ namespace ui {
     class DialogBox;
     class SnackBar;
     class PositionedImpl;
+    class SizedBoxImpl;
 
     struct Color { uint8_t r, g, b, a = 255; };
     struct TextStyle { int fontSize = 16; Color color = { 0, 0, 0 }; std::string fontFile; };
@@ -1019,14 +1020,13 @@ namespace ui {
             }
             if (child) child->render(a, r);
         }
-        void handleEvent(App*, SDL_Event* e) override {
+        void handleEvent(App* a, SDL_Event* e) override {
             if (e->type == SDL_MOUSEMOTION) {
                 SDL_Point mousePos = { e->motion.x, e->motion.y };
                 isHovered = SDL_PointInRect(&mousePos, &m_allocatedSize);
             }
-            if (e->type == SDL_MOUSEBUTTONDOWN) {
-                SDL_Point mousePos = { e->button.x, e->button.y };
-                if (isHovered && onPressed && SDL_PointInRect(&mousePos, &m_allocatedSize)) {
+            else if (e->type == SDL_MOUSEBUTTONDOWN) {
+                if (onPressed) {
                     std::cout << "[EVENT] Button pressed!" << std::endl;
                     onPressed();
                 }
@@ -1037,6 +1037,7 @@ namespace ui {
     public:
         TextButton(const std::string& t, std::function<void()> o, Style s = {}) : Widget(std::make_shared<ButtonImpl>(Text(t, s.textStyle), std::move(o), std::move(s))) {}
     };
+
     class IconButton : public Widget {
     public:
         IconButton(const std::string& imagePath, std::function<void()> o, Style s = {}) : Widget(std::make_shared<ButtonImpl>(Image(imagePath), std::move(o), std::move(s))) {}
@@ -1199,92 +1200,6 @@ namespace ui {
     };
 
     // --- Overlays and Scaffolding ---
-
-// این بلوک کامل را در فایل libfux.hpp جایگزین کلاس DialogBoxImpl قبلی کنید
-
-    class DialogBoxImpl : public WidgetBody {
-        std::shared_ptr<WidgetBody> child;
-    public:
-        DialogBoxImpl(Widget c) {
-            child = c.getImpl();
-            if (child) child->parent = this;
-        }
-
-        void performLayout(IRenderer* r, SDL_Rect c) override {
-            // پس‌زمینه نیمه‌شفاف کل صفحه را می‌گیرد
-            m_allocatedSize = c;
-
-            if (child) {
-                // ۱. حداکثر اندازه برای محتوای دیالوگ تعریف می‌کنیم
-                // ** FIX: Add static_cast to remove conversion warnings **
-                int max_w = static_cast<int>(c.w * 0.8);
-                int max_h = static_cast<int>(c.h * 0.8);
-
-                // ۲. از فرزند می‌پرسیم چقدر فضا نیاز دارد
-                child->performLayout(r, { 0, 0, max_w, max_h });
-
-                // ۳. اندازه واقعی مورد نیاز فرزند را دریافت می‌کنیم
-                int child_w = child->m_allocatedSize.w;
-                int child_h = child->m_allocatedSize.h;
-
-                // ۴. فرزند را بر اساس اندازه واقعی‌اش در وسط صفحه قرار می‌دهیم
-                int child_x = c.x + (c.w - child_w) / 2;
-                int child_y = c.y + (c.h - child_h) / 2;
-
-                // ۵. موقعیت نهایی فرزند را تنظیم می‌کنیم
-                child->m_allocatedSize.x = child_x;
-                child->m_allocatedSize.y = child_y;
-            }
-        }
-
-        void render(App* a, IRenderer* r) override {
-            r->drawRect(m_allocatedSize, { 0,0,0,128 }, {});
-            if (child) child->render(a, r);
-        }
-
-        // ** FIX: Only one definition of hitTest, render, and handleEvent **
-        WidgetBody* hitTest(SDL_Point p) override {
-            if (!child) return this; // If no child, the whole dialog is clickable
-
-            WidgetBody* target = child->hitTest(p);
-            if (target) return target; // If click is inside the child, return child
-
-            // If click is outside the child but on the dialog background, consume the event
-            return SDL_PointInRect(&p, &m_allocatedSize) ? this : nullptr;
-        }
-
-        void handleEvent(App* a, SDL_Event* e) override {
-            if (child) {
-                child->handleEvent(a, e);
-            }
-        }
-    };
-    class DialogBox : public Widget {
-    public:
-        DialogBox(Widget child) : Widget(std::make_shared<DialogBoxImpl>(child)) {}
-    };
-
-    class SnackBarImpl : public WidgetBody {
-        std::shared_ptr<WidgetBody> child; SnackBarPosition position;
-    public:
-        SnackBarImpl(Widget c, SnackBarPosition p) : position(p) { child = c.getImpl(); if (child) child->parent = this; }
-        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 400, ch = 50; int cx = c.x + (c.w - cw) / 2; int cy = (position == SnackBarPosition::Bottom) ? c.y + c.h - ch - 20 : c.y + 20; child->performLayout(r, { cx, cy, cw, ch }); } }
-        void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
-        WidgetBody* hitTest(SDL_Point p) override { return nullptr; }
-    };
-    class SnackBar : public Widget {
-    public:
-        SnackBar(Widget child, SnackBarPosition p = SnackBarPosition::Bottom) : Widget(std::make_shared<SnackBarImpl>(child, p)) {}
-    };
-
-    class ScaffoldImpl : public ContainerImpl {
-    public:
-        ScaffoldImpl(Widget child, Style style) : ContainerImpl(child, std::move(style)) {}
-    };
-    class Scaffold : public Widget {
-    public:
-        Scaffold(Widget child, Style s = {}) : Widget(std::make_shared<ScaffoldImpl>(child, std::move(s))) {}
-    };
     class SizedBoxImpl : public WidgetBody {
     public:
         std::shared_ptr<WidgetBody> child;
@@ -1328,6 +1243,111 @@ namespace ui {
     public:
         SizedBox(Widget child, Size s) : Widget(std::make_shared<SizedBoxImpl>(child, s)) {}
     };
+
+    class DialogBoxImpl : public WidgetBody {
+        std::shared_ptr<WidgetBody> child;
+
+    private:
+        void applyOffsetToDescendants(WidgetBody* body, int dx, int dy) {
+            if (!body) return;
+
+            body->m_allocatedSize.x += dx;
+            body->m_allocatedSize.y += dy;
+            
+            if (auto impl = dynamic_cast<ContainerImpl*>(body)) {
+                applyOffsetToDescendants(impl->child.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<ColumnImpl*>(body)) {
+                for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<RowImpl*>(body)) {
+                for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<StackImpl*>(body)) {
+                for (const auto& c : impl->children) applyOffsetToDescendants(c.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<CenterImpl*>(body)) {
+                applyOffsetToDescendants(impl->child.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<SizedBoxImpl*>(body)) {
+                applyOffsetToDescendants(impl->child.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<ButtonImpl*>(body)) {
+                applyOffsetToDescendants(impl->child.get(), dx, dy);
+            }
+            else if (auto impl = dynamic_cast<ObxImpl*>(body)) {
+                applyOffsetToDescendants(impl->m_child.get(), dx, dy);
+            }
+        }
+
+    public:
+        DialogBoxImpl(Widget c) {
+            child = c.getImpl();
+            if (child) child->parent = this;
+        }
+
+        void performLayout(IRenderer* r, SDL_Rect c) override {
+            m_allocatedSize = c;
+
+            if (child) {
+                int max_w = static_cast<int>(c.w * 0.8);
+                child->performLayout(r, { 0, 0, max_w, 9999 });
+
+                int child_w = child->m_allocatedSize.w;
+                int child_h = child->m_allocatedSize.h;
+
+                int dx = c.x + (c.w - child_w) / 2;
+                int dy = c.y + (c.h - child_h) / 2;
+
+                applyOffsetToDescendants(child.get(), dx, dy);
+            }
+        }
+
+        void render(App* a, IRenderer* r) override {
+            r->drawRect(m_allocatedSize, { 0, 0, 0, 128 }, {});
+            if (child) child->render(a, r);
+        }
+
+        WidgetBody* hitTest(SDL_Point p) override {
+            if (!child) return this;
+            WidgetBody* target = child->hitTest(p);
+            return target ? target : this;
+        }
+
+        void handleEvent(App* a, SDL_Event* e) override {
+            if (child) {
+                child->handleEvent(a, e);
+            }
+        }
+    };
+    class DialogBox : public Widget {
+    public:
+        DialogBox(Widget child) : Widget(std::make_shared<DialogBoxImpl>(child)) {}
+    };
+
+
+    class SnackBarImpl : public WidgetBody {
+        std::shared_ptr<WidgetBody> child; SnackBarPosition position;
+    public:
+        SnackBarImpl(Widget c, SnackBarPosition p) : position(p) { child = c.getImpl(); if (child) child->parent = this; }
+        void performLayout(IRenderer* r, SDL_Rect c) override { m_allocatedSize = c; if (child) { int cw = 400, ch = 50; int cx = c.x + (c.w - cw) / 2; int cy = (position == SnackBarPosition::Bottom) ? c.y + c.h - ch - 20 : c.y + 20; child->performLayout(r, { cx, cy, cw, ch }); } }
+        void render(App* a, IRenderer* r) override { if (child) child->render(a, r); }
+        WidgetBody* hitTest(SDL_Point p) override { return nullptr; }
+    };
+    class SnackBar : public Widget {
+    public:
+        SnackBar(Widget child, SnackBarPosition p = SnackBarPosition::Bottom) : Widget(std::make_shared<SnackBarImpl>(child, p)) {}
+    };
+
+    class ScaffoldImpl : public ContainerImpl {
+    public:
+        ScaffoldImpl(Widget child, Style style) : ContainerImpl(child, std::move(style)) {}
+    };
+    class Scaffold : public Widget {
+    public:
+        Scaffold(Widget child, Style s = {}) : Widget(std::make_shared<ScaffoldImpl>(child, std::move(s))) {}
+    };
+  
 
     inline void popOverlay() {
         if (App::instance()) App::instance()->popOverlay();
@@ -1373,7 +1393,6 @@ namespace ui {
             applyOffsetToDescendants(impl->child.get(), dy, originalRects);
         }
         else if (auto impl = dynamic_cast<ObxImpl*>(body)) {
-            // CORRECTED: Use m_child for ObxImpl
             applyOffsetToDescendants(impl->m_child.get(), dy, originalRects);
         }
         else if (auto impl = dynamic_cast<ButtonImpl*>(body)) {
